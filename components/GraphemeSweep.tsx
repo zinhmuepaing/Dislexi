@@ -10,11 +10,8 @@
  * phonemes (§7 rule 4: neural TTS hallucinates a schwa on isolated plosives,
  * which is pedagogically harmful). No LLM anywhere in this path (§7 rule 3).
  *
- * TODO (autopsy page wiring):
- *  - drive `activeIndex` on a timer, playing new Audio(`/phonemes/${chunk.phonemeId}.mp3`)
- *    per chunk, then blend: whole word once via TTS;
- *  - "now trace it": ~5 fps MediaPipe loop verifying fingertip (landmark 8)
- *    inside the word box with net left-to-right motion, chime on completion.
+ * The autopsy page drives `activeIndex`, playing each chunk's static phoneme
+ * clip, then blends the whole word via TTS and runs the trace-to-unlock loop.
  */
 
 import { subBoxFor, OcrBox } from "./KaraokeHighlight";
@@ -44,12 +41,17 @@ export function GraphemeSweep({
 }: GraphemeSweepProps) {
   if (frameWidth <= 0 || frameHeight <= 0) return null;
 
+  const starts: number[] = [];
   let charStart = 0;
+  for (const chunk of chunks) {
+    starts.push(charStart);
+    charStart += chunk.text.length;
+  }
+
   return (
     <>
       {chunks.map((chunk, i) => {
-        const r = subBoxFor(wordBox, charStart, chunk.text.length);
-        charStart += chunk.text.length;
+        const r = subBoxFor(wordBox, starts[i], chunk.text.length);
         const active = i === activeIndex;
         return (
           <div
