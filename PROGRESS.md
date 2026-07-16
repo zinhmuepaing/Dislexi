@@ -53,11 +53,20 @@ All verification gates PASSED on 2026-07-17 (second session — shell recovered)
   (`scripts/register-telegram-webhook.mts`): setWebhook ok, no-secret POST →
   401, with-secret POST → 200 — Vercel's `TELEGRAM_WEBHOOK_SECRET` matches
   .env.local.
-- **Telegram delivery BLOCKED: "chat not found"** — bot is @DislexiBot (token
-  valid), but `TELEGRAM_DEFAULT_CHAT_ID` is a chat the bot has never seen
-  (`scripts/diag-telegram-chat.mts`). Bots can't message first. USER ACTION:
-  open @DislexiBot, press Start — the live webhook replies with the correct
-  chat id — then put that id in .env.local AND Vercel, redeploy, and rerun
+- **Telegram delivery VERIFIED locally 2026-07-17** — after the user /start-ed
+  @DislexiBot, `scripts/test-telegram-delivery.mts http://localhost:3000`
+  delivered the PDF + XLSX to the chat (id 1864618186 is correct). Bot profile
+  (commands, description, about) set via `scripts/setup-telegram-profile.mts`;
+  photo + privacy toggle remain owner-only in BotFather (/setuserpic,
+  /setprivacy) — cosmetic, not blocking.
+- **Vercel env still broken for two vars** (local values are proven good, so
+  the Vercel copies differ — likely pasted with trailing `# …` comments):
+  - `AZURE_SPEECH_KEY` → /api/azure-token 502 "token mint failed" (region fix
+    landed: was 500-crash, now clean 502 from Azure auth).
+  - `TELEGRAM_BOT_TOKEN` and/or `TELEGRAM_DEFAULT_CHAT_ID` → /api/report-upload
+    502 on production while identical local test returns delivered:true.
+  USER ACTION: in Vercel re-paste those three values (value only, no comments/
+  quotes/whitespace), redeploy, then rerun
   `npx tsx scripts/test-telegram-delivery.mts https://dislexi.vercel.app`.
 - Live on-device pass with real camera/phone: TTS karaoke, autopsy sweep,
   Telegram delivery.
