@@ -12,6 +12,8 @@ const eslintConfig = defineConfig([
     "out/**",
     "build/**",
     "next-env.d.ts",
+    // Vendored MediaPipe wasm bundle (copied from node_modules, Phase 1.1).
+    "public/models/**",
   ]),
 ]);
 

@@ -1,5 +1,7 @@
 # CLAUDE.md — Dislexi
 
+> **Session state / blockers / next steps: see `PROGRESS.md`.**
+
 Assistive Reading & Tutoring System for students with dyslexia/ADHD (Tech4City
 2026). Mobile-first Next.js web app; the phone sits in a stand with a mirror
 clip over the front camera, looking down at a worksheet on the desk.
