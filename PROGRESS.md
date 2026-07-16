@@ -28,12 +28,23 @@ All verification gates PASSED on 2026-07-17 (second session — shell recovered)
 
 ## NEXT
 
-- **`/api/sessions` + `/api/session-end` return 500 with live creds** — seen in
-  smoke test on every page. Supabase credentials exist, so most likely the DB
-  schema (SETUP.md) hasn't been applied to the project yet. UI degrades
-  gracefully. Verify schema, then re-test event logging end-to-end.
-- Live end-to-end pass with real camera/phone: OCR, TTS karaoke, tutor SSE,
-  autopsy sweep, Telegram delivery.
+- **Supabase is NOT set up** (confirmed 2026-07-17): `SUPABASE_URL` and
+  `SUPABASE_SERVICE_ROLE_KEY` are empty in `.env.local` — that's the whole
+  cause of the `/api/sessions` 500s. USER ACTION: SETUP.md §1 (create project,
+  run schema SQL, paste the two values). Everything else in `.env.local` is
+  real: Azure Vision + Speech, Anthropic, Telegram bot token + chat id are
+  filled; `TELEGRAM_WEBHOOK_SECRET` was generated and written 2026-07-17.
+- **Live API tests 2026-07-17 (local prod server):** `/api/azure-token` ✅
+  (southeastasia token), `/api/ocr` ✅ (2-line synthetic worksheet, verbatim,
+  conf 0.997, one block per line), `/api/tutor` ✅ (SSE deltas + steps with
+  correct normalized regions) — after fixing `lib/tutor-model.ts` to sniff the
+  image media type from base64 magic bytes (was: trust data: prefix, default
+  jpeg; Anthropic 400s on mismatch). Telegram send deliberately NOT tested
+  (would message the real configured chat).
+- **Vercel**: add all `.env.local` vars in the dashboard, deploy, then register
+  the Telegram webhook (SETUP.md §3.5) with the generated secret.
+- Live on-device pass with real camera/phone: TTS karaoke, autopsy sweep,
+  Telegram delivery.
 - Self-record the 7 diphthong phonemes (CC0) and drop into `public/phonemes/`.
 
 ## BLOCKED - NEEDS ACTION

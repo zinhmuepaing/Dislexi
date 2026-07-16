@@ -109,13 +109,16 @@ export async function runTutor(
   { imageBase64, question, history }: TutorRequest,
   onDelta: (text: string) => void,
 ): Promise<TutorStep[]> {
-  const prefixMatch = imageBase64.match(/^data:(image\/\w+);base64,/);
-  const mediaType = (prefixMatch?.[1] ?? "image/jpeg") as
-    | "image/jpeg"
-    | "image/png"
-    | "image/webp"
-    | "image/gif";
   const data = imageBase64.replace(/^data:image\/\w+;base64,/, "");
+  // The API rejects a media_type that doesn't match the actual bytes — sniff
+  // the base64 magic instead of trusting any data: prefix.
+  const mediaType = data.startsWith("iVBOR")
+    ? ("image/png" as const)
+    : data.startsWith("UklGR")
+      ? ("image/webp" as const)
+      : data.startsWith("R0lGOD")
+        ? ("image/gif" as const)
+        : ("image/jpeg" as const);
 
   const messages: Anthropic.MessageParam[] = [
     ...(history ?? []).map((t) => ({ role: t.role, content: t.content })),
