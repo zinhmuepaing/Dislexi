@@ -1,0 +1,73 @@
+"use client";
+
+/**
+ * GraphemeSweep — chunk-by-chunk sound-out highlight for the Stuck-Word
+ * Autopsy (ARCHITECTURE.md §8 Autopsy flow, §7 rules 3, 4, 7).
+ *
+ * The word's OCR box is split proportionally by grapheme character counts
+ * (§7 rule 7). The active chunk is highlighted while its phoneme plays from
+ * the STATIC audio bank at /public/phonemes/{id}.mp3 — NEVER TTS for isolated
+ * phonemes (§7 rule 4: neural TTS hallucinates a schwa on isolated plosives,
+ * which is pedagogically harmful). No LLM anywhere in this path (§7 rule 3).
+ *
+ * TODO (autopsy page wiring):
+ *  - drive `activeIndex` on a timer, playing new Audio(`/phonemes/${chunk.phonemeId}.mp3`)
+ *    per chunk, then blend: whole word once via TTS;
+ *  - "now trace it": ~5 fps MediaPipe loop verifying fingertip (landmark 8)
+ *    inside the word box with net left-to-right motion, chime on completion.
+ */
+
+import { subBoxFor, OcrBox } from "./KaraokeHighlight";
+
+export interface GraphemeChunk {
+  /** The grapheme text, e.g. "ch", "ar", "ge". */
+  text: string;
+  /** Static bank file id → /public/phonemes/{phonemeId}.mp3 */
+  phonemeId: string;
+}
+
+interface GraphemeSweepProps {
+  wordBox: OcrBox;
+  chunks: GraphemeChunk[];
+  /** Index of the chunk currently sounding out; -1 for none. */
+  activeIndex: number;
+  frameWidth: number;
+  frameHeight: number;
+}
+
+export function GraphemeSweep({
+  wordBox,
+  chunks,
+  activeIndex,
+  frameWidth,
+  frameHeight,
+}: GraphemeSweepProps) {
+  if (frameWidth <= 0 || frameHeight <= 0) return null;
+
+  let charStart = 0;
+  return (
+    <>
+      {chunks.map((chunk, i) => {
+        const r = subBoxFor(wordBox, charStart, chunk.text.length);
+        charStart += chunk.text.length;
+        const active = i === activeIndex;
+        return (
+          <div
+            key={i}
+            className={`absolute rounded-sm transition-all duration-150 ${
+              active
+                ? "bg-sky-400/60 outline outline-2 outline-sky-500"
+                : "bg-sky-200/20"
+            }`}
+            style={{
+              left: `${(r.x / frameWidth) * 100}%`,
+              top: `${(r.y / frameHeight) * 100}%`,
+              width: `${(r.w / frameWidth) * 100}%`,
+              height: `${(r.h / frameHeight) * 100}%`,
+            }}
+          />
+        );
+      })}
+    </>
+  );
+}

@@ -1,0 +1,11 @@
+{
+  "name": "Dislexi — Assistive Reading & Tutoring",
+  "short_name": "Dislexi",
+  "description": "Point-and-read exam prep, AI tutoring, and phonics practice for students with dyslexia/ADHD.",
+  "start_url": "/",
+  "display": "standalone",
+  "orientation": "portrait",
+  "background_color": "#0a0a0a",
+  "theme_color": "#0a0a0a",
+  "icons": []
+}
