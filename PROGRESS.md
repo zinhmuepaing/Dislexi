@@ -59,15 +59,22 @@ All verification gates PASSED on 2026-07-17 (second session — shell recovered)
   (commands, description, about) set via `scripts/setup-telegram-profile.mts`;
   photo + privacy toggle remain owner-only in BotFather (/setuserpic,
   /setprivacy) — cosmetic, not blocking.
-- **Vercel env still broken for two vars** (local values are proven good, so
-  the Vercel copies differ — likely pasted with trailing `# …` comments):
-  - `AZURE_SPEECH_KEY` → /api/azure-token 502 "token mint failed" (region fix
-    landed: was 500-crash, now clean 502 from Azure auth).
-  - `TELEGRAM_BOT_TOKEN` and/or `TELEGRAM_DEFAULT_CHAT_ID` → /api/report-upload
-    502 on production while identical local test returns delivered:true.
-  USER ACTION: in Vercel re-paste those three values (value only, no comments/
-  quotes/whitespace), redeploy, then rerun
-  `npx tsx scripts/test-telegram-delivery.mts https://dislexi.vercel.app`.
+- **Production integration status (2026-07-17, after user's env fixes):**
+  - ✅ Supabase: /api/sessions, /api/events, /api/session-end
+  - ✅ Azure Speech: /api/azure-token (region + key fixed on Vercel)
+  - ✅ Telegram: webhook verified (401/200 probes), delivery
+    `{delivered:true}` from production — PDF + XLSX arrived in chat;
+    bot profile (commands/description/about) set via
+    `scripts/setup-telegram-profile.mts`
+  - ❌ Azure Vision: /api/ocr → 502 (works locally) — `AZURE_VISION_KEY` /
+    `AZURE_VISION_ENDPOINT` on Vercel still bad copies
+  - ❌ Anthropic: /api/tutor → error frame (works locally) —
+    `ANTHROPIC_API_KEY` on Vercel still a bad copy
+  USER ACTION: re-paste those three values in Vercel (value only — no `# …`
+  comments/quotes/whitespace, Production scope, no duplicates), redeploy.
+  Retest: POST /api/ocr + /api/tutor against https://dislexi.vercel.app.
+- npm warn `uuid@9.0.1 deprecated` in Vercel build logs is a transitive dep of
+  microsoft-cognitiveservices-speech-sdk — install-time noise only, no action.
 - Live on-device pass with real camera/phone: TTS karaoke, autopsy sweep,
   Telegram delivery.
 - Self-record the 7 diphthong phonemes (CC0) and drop into `public/phonemes/`.
