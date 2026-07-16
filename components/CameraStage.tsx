@@ -39,6 +39,11 @@ export interface CameraStageHandle {
   captureFrame: () => CapturedFrame | null;
   /** Return to the live (flipped) preview. */
   unfreeze: () => void;
+  /**
+   * The flipped display canvas (step 0 already applied) — safe MediaPipe input.
+   * While frozen it holds the frozen frame; in trace mode it keeps refreshing.
+   */
+  getCanvas: () => HTMLCanvasElement | null;
 }
 
 interface CameraStageProps {
@@ -121,6 +126,7 @@ export const CameraStage = forwardRef<CameraStageHandle, CameraStageProps>(
       unfreeze: () => {
         frozenRef.current = false;
       },
+      getCanvas: () => canvasRef.current,
     }));
 
     return (
