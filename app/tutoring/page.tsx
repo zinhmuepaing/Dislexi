@@ -3,17 +3,16 @@
 /**
  * AI Tutoring (ARCHITECTURE.md §8): question (voice or text — text input is a
  * permanent fallback, §9.5) → capture+flip, freeze (§7 rules 1–2) →
- * POST /api/tutor (SSE) → stream narration text as it arrives, then highlight
- * each step's region on the frozen frame in sync. Follow-ups append to
- * `history`. Regions are normalized 0–1 relative to the submitted image and
- * converted to canvas pixels here (§5.3).
- *
- * TODO(pipeline): narrate each step via Azure Speech (start TTS on first
- * complete step), advance highlights in sync, voice input via Web Speech API.
+ * POST /api/tutor (SSE) → stream narration text as it arrives, then narrate
+ * each step via Azure Speech with its region highlighted on the frozen frame
+ * in sync. Follow-ups append to `history` and reuse the same frozen frame.
+ * Regions are normalized 0–1 relative to the submitted image (§5.3).
  */
 
-import { useRef, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { CameraStage, CameraStageHandle, CapturedFrame } from "@/components/CameraStage";
+import { speak, stopSpeaking, announce } from "@/lib/speech";
+import { SessionLogger } from "@/lib/event-queue";
 
 interface TutorStep {
   say: string;
@@ -25,8 +24,23 @@ interface TutorTurn {
   content: string;
 }
 
+interface DictationCtor {
+  new (): {
+    continuous: boolean;
+    interimResults: boolean;
+    lang: string;
+    start: () => void;
+    stop: () => void;
+    onresult: ((event: { resultIndex: number; results: { [i: number]: { [j: number]: { transcript: string }; isFinal: boolean }; length: number } }) => void) | null;
+    onend: (() => void) | null;
+    onerror: (() => void) | null;
+  };
+}
+
 export default function TutoringPage() {
   const stage = useRef<CameraStageHandle>(null);
+  const logger = useRef<SessionLogger | null>(null);
+  const narrationRun = useRef(0); // bump to cancel an in-flight narration loop
   const [question, setQuestion] = useState("");
   const [frame, setFrame] = useState<CapturedFrame | null>(null);
   const [streamText, setStreamText] = useState("");
@@ -34,6 +48,31 @@ export default function TutoringPage() {
   const [activeStep, setActiveStep] = useState(-1);
   const [history, setHistory] = useState<TutorTurn[]>([]);
   const [busy, setBusy] = useState(false);
+  const [dictating, setDictating] = useState(false);
+
+  useEffect(() => {
+    announce("Look at your screen. Ask me about your worksheet."); // §7 rule 6
+    SessionLogger.start("tutoring").then((l) => (logger.current = l));
+    return () => {
+      narrationRun.current++;
+      stopSpeaking();
+    };
+  }, []);
+
+  /** Speak each step in order, advancing the highlight in sync. */
+  async function narrate(allSteps: TutorStep[]) {
+    const run = ++narrationRun.current;
+    for (let i = 0; i < allSteps.length; i++) {
+      if (narrationRun.current !== run) return; // superseded
+      setActiveStep(i);
+      try {
+        await speak(allSteps[i].say);
+      } catch (err) {
+        console.error("narration failed:", err);
+        return; // highlights stay tappable as the fallback
+      }
+    }
+  }
 
   async function ask() {
     if (!question.trim() || busy) return;
@@ -42,11 +81,14 @@ export default function TutoringPage() {
     // frozen frame so regions keep referring to the same image.
     const captured = frame ?? stage.current?.captureFrame() ?? null;
     if (!captured) return;
+    narrationRun.current++;
+    stopSpeaking();
     setFrame(captured);
     setBusy(true);
     setStreamText("");
     setSteps([]);
     setActiveStep(-1);
+    logger.current?.log({ type: "tutor_question", word: question });
 
     try {
       const res = await fetch("/api/tutor", {
@@ -86,20 +128,42 @@ export default function TutoringPage() {
       }
 
       setSteps(finalSteps);
-      setActiveStep(finalSteps.length > 0 ? 0 : -1);
       setHistory((h) => [
         ...h,
         { role: "user", content: question },
         { role: "assistant", content: JSON.stringify({ steps: finalSteps }) },
       ]);
       setQuestion("");
-      // TODO: narrate steps[i].say via Azure Speech, advancing setActiveStep(i)
-      // in sync; log a 'tutor_question' event via /api/events.
+      void narrate(finalSteps);
     } catch (err) {
       console.error(err);
       setStreamText("Sorry, tutoring failed — please try again.");
     } finally {
       setBusy(false);
+    }
+  }
+
+  /** One-shot dictation into the question box (§9.5: text input stays). */
+  function dictate() {
+    const Ctor = (window as unknown as { webkitSpeechRecognition?: DictationCtor })
+      .webkitSpeechRecognition;
+    if (!Ctor || dictating) return;
+    const rec = new Ctor();
+    rec.continuous = false;
+    rec.interimResults = true;
+    rec.lang = "en-SG";
+    rec.onresult = (event) => {
+      let text = "";
+      for (let i = 0; i < event.results.length; i++) text += event.results[i][0]?.transcript ?? "";
+      setQuestion(text);
+    };
+    rec.onend = () => setDictating(false);
+    rec.onerror = () => setDictating(false);
+    try {
+      rec.start();
+      setDictating(true);
+    } catch {
+      setDictating(false);
     }
   }
 
@@ -131,6 +195,14 @@ export default function TutoringPage() {
           className="flex-1 rounded-xl border border-white/20 bg-white/5 p-3"
         />
         <button
+          onClick={dictate}
+          disabled={dictating}
+          className="rounded-xl bg-white/10 px-4 font-semibold disabled:opacity-50 active:scale-95"
+          aria-label="Speak your question"
+        >
+          {dictating ? "…" : "Mic"}
+        </button>
+        <button
           onClick={ask}
           disabled={busy}
           className="rounded-xl bg-sky-500 px-5 font-semibold text-white disabled:opacity-50 active:scale-95"
@@ -144,7 +216,12 @@ export default function TutoringPage() {
           {steps.map((s, i) => (
             <li key={i}>
               <button
-                onClick={() => setActiveStep(i)}
+                onClick={() => {
+                  narrationRun.current++; // manual tap takes over from auto-narration
+                  stopSpeaking();
+                  setActiveStep(i);
+                  void speak(s.say).catch(() => {});
+                }}
                 className={`w-full rounded-lg p-3 text-left text-sm ${
                   i === activeStep ? "bg-sky-500/20 outline outline-1 outline-sky-400" : "bg-white/5"
                 }`}
