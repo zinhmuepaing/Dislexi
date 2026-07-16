@@ -10,9 +10,7 @@
  * event (textOffset/wordLength) selects the active word — that event is the
  * ENTIRE sync mechanism; no timing estimator (§5.4).
  *
- * TODO: wire to microsoft-cognitiveservices-speech-sdk in the exam-prep page:
- *   SpeechConfig.fromAuthorizationToken(token, region) via GET /api/azure-token,
- *   synthesizer.wordBoundary -> setActiveCharRange(e.textOffset, e.wordLength).
+ * Driven by lib/speech.ts speak() wordBoundary callbacks (see exam-prep page).
  */
 
 export interface OcrBox {
