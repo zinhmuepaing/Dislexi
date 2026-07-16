@@ -28,12 +28,14 @@ All verification gates PASSED on 2026-07-17 (second session — shell recovered)
 
 ## NEXT
 
-- **Supabase is NOT set up** (confirmed 2026-07-17): `SUPABASE_URL` and
-  `SUPABASE_SERVICE_ROLE_KEY` are empty in `.env.local` — that's the whole
-  cause of the `/api/sessions` 500s. USER ACTION: SETUP.md §1 (create project,
-  run schema SQL, paste the two values). Everything else in `.env.local` is
-  real: Azure Vision + Speech, Anthropic, Telegram bot token + chat id are
-  filled; `TELEGRAM_WEBHOOK_SECRET` was generated and written 2026-07-17.
+- ~~Supabase not set up~~ **RESOLVED 2026-07-17**: user created the project and
+  applied the schema. Live end-to-end verified locally: POST /api/sessions →
+  sessionId, POST /api/events (3 typed events), POST /api/session-end → correct
+  aggregate stats, and /stats/[sessionId] renders all 4 charts from the live
+  data (verified by screenshot; note Playwright `full_page=True` screenshots
+  blank out canvases — use viewport screenshots for chart checks).
+  `TELEGRAM_WEBHOOK_SECRET` was generated and written to `.env.local`
+  2026-07-17 — make sure Vercel's env vars carry the SAME value.
 - **Live API tests 2026-07-17 (local prod server):** `/api/azure-token` ✅
   (southeastasia token), `/api/ocr` ✅ (2-line synthetic worksheet, verbatim,
   conf 0.997, one block per line), `/api/tutor` ✅ (SSE deltas + steps with
@@ -41,8 +43,11 @@ All verification gates PASSED on 2026-07-17 (second session — shell recovered)
   image media type from base64 magic bytes (was: trust data: prefix, default
   jpeg; Anthropic 400s on mismatch). Telegram send deliberately NOT tested
   (would message the real configured chat).
-- **Vercel**: add all `.env.local` vars in the dashboard, deploy, then register
-  the Telegram webhook (SETUP.md §3.5) with the generated secret.
+- **Vercel deployed by user 2026-07-17** — still to do: verify the production
+  URL serves the app + APIs, then register the Telegram webhook
+  (SETUP.md §3.5) with the generated secret. Needs the production domain.
+- Telegram delivery (`/api/report-upload`, webhook replies) untested — sends
+  real messages to the configured chat; test deliberately, not automatically.
 - Live on-device pass with real camera/phone: TTS karaoke, autopsy sweep,
   Telegram delivery.
 - Self-record the 7 diphthong phonemes (CC0) and drop into `public/phonemes/`.
