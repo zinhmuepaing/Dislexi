@@ -66,13 +66,13 @@ All verification gates PASSED on 2026-07-17 (second session — shell recovered)
     `{delivered:true}` from production — PDF + XLSX arrived in chat;
     bot profile (commands/description/about) set via
     `scripts/setup-telegram-profile.mts`
-  - ❌ Azure Vision: /api/ocr → 502 (works locally) — `AZURE_VISION_KEY` /
-    `AZURE_VISION_ENDPOINT` on Vercel still bad copies
-  - ❌ Anthropic: /api/tutor → error frame (works locally) —
-    `ANTHROPIC_API_KEY` on Vercel still a bad copy
-  USER ACTION: re-paste those three values in Vercel (value only — no `# …`
-  comments/quotes/whitespace, Production scope, no duplicates), redeploy.
-  Retest: POST /api/ocr + /api/tutor against https://dislexi.vercel.app.
+  - ✅ Azure Vision: /api/ocr (verbatim, conf 0.997, one block per line)
+  - ✅ Anthropic: /api/tutor (SSE deltas + steps, correct regions)
+  **ALL PRODUCTION INTEGRATIONS VERIFIED 2026-07-17.** Root cause of every
+  earlier failure: env values pasted into Vercel with trailing `# …` comments
+  from .env.local. Remaining work is non-code: on-device pass with the real
+  phone/stand/worksheet, 7 diphthong recordings, optional bot photo
+  (/setuserpic in BotFather).
 - npm warn `uuid@9.0.1 deprecated` in Vercel build logs is a transitive dep of
   microsoft-cognitiveservices-speech-sdk — install-time noise only, no action.
 - Live on-device pass with real camera/phone: TTS karaoke, autopsy sweep,
