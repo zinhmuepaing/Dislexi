@@ -43,11 +43,22 @@ All verification gates PASSED on 2026-07-17 (second session — shell recovered)
   image media type from base64 magic bytes (was: trust data: prefix, default
   jpeg; Anthropic 400s on mismatch). Telegram send deliberately NOT tested
   (would message the real configured chat).
-- **Vercel deployed by user 2026-07-17** — still to do: verify the production
-  URL serves the app + APIs, then register the Telegram webhook
-  (SETUP.md §3.5) with the generated secret. Needs the production domain.
-- Telegram delivery (`/api/report-upload`, webhook replies) untested — sends
-  real messages to the configured chat; test deliberately, not automatically.
+- **Vercel deployed** at https://dislexi.vercel.app (2026-07-17). Verified:
+  home 200, `/api/sessions` OK (Supabase env correct on Vercel). **BROKEN:
+  `/api/azure-token` 500s with an empty body on Vercel** (works locally) —
+  the handler crashes building the Azure URL, so `AZURE_SPEECH_REGION` on
+  Vercel almost certainly has stray text (trailing `# …` comment pasted from
+  .env.local?). USER ACTION: set it to exactly `southeastasia`, redeploy.
+- **Telegram webhook REGISTERED + VERIFIED** against production
+  (`scripts/register-telegram-webhook.mts`): setWebhook ok, no-secret POST →
+  401, with-secret POST → 200 — Vercel's `TELEGRAM_WEBHOOK_SECRET` matches
+  .env.local.
+- **Telegram delivery BLOCKED: "chat not found"** — bot is @DislexiBot (token
+  valid), but `TELEGRAM_DEFAULT_CHAT_ID` is a chat the bot has never seen
+  (`scripts/diag-telegram-chat.mts`). Bots can't message first. USER ACTION:
+  open @DislexiBot, press Start — the live webhook replies with the correct
+  chat id — then put that id in .env.local AND Vercel, redeploy, and rerun
+  `npx tsx scripts/test-telegram-delivery.mts https://dislexi.vercel.app`.
 - Live on-device pass with real camera/phone: TTS karaoke, autopsy sweep,
   Telegram delivery.
 - Self-record the 7 diphthong phonemes (CC0) and drop into `public/phonemes/`.
