@@ -12,6 +12,7 @@
  */
 
 import { useCallback, useEffect, useRef, useState } from "react";
+import Link from "next/link";
 import { useParams } from "next/navigation";
 import Chart from "chart.js/auto";
 import type { ChartConfiguration } from "chart.js";
@@ -65,7 +66,7 @@ export default function StatsPage() {
           {
             label: "events",
             data: Object.values(stats.countsByType),
-            backgroundColor: "#34d399",
+            backgroundColor: "#2B6CB0",
           },
         ],
       },
@@ -79,7 +80,7 @@ export default function StatsPage() {
           {
             label: "re-reads",
             data: Object.values(stats.rereadsByQuestion),
-            backgroundColor: "#fbbf24",
+            backgroundColor: "#FFB020",
           },
         ],
       },
@@ -93,7 +94,7 @@ export default function StatsPage() {
           {
             label: "requests",
             data: stats.topWords.map((w) => w.count),
-            backgroundColor: "#38bdf8",
+            backgroundColor: "#2F9E63",
           },
         ],
       },
@@ -107,8 +108,8 @@ export default function StatsPage() {
           {
             label: "gap (s)",
             data: stats.pacingGapsSeconds,
-            borderColor: "#a78bfa",
-            backgroundColor: "#a78bfa44",
+            borderColor: "#2B6CB0",
+            backgroundColor: "rgba(43,108,176,0.2)",
             fill: true,
             tension: 0.3,
           },
@@ -213,21 +214,32 @@ export default function StatsPage() {
 
   if (error) {
     return (
-      <main className="mx-auto w-full max-w-md p-4">
-        <h1 className="text-xl font-bold">Session stats</h1>
-        <p className="mt-4 text-sm opacity-70">{error}</p>
+      <main className="mx-auto w-full max-w-md p-4 pt-5">
+        <header className="flex items-center gap-3">
+          <Link href="/" className="btn btn-ghost !px-3 !py-1.5 text-sm" aria-label="Home">
+            ←
+          </Link>
+          <h1 className="font-display text-xl font-extrabold">Session stats</h1>
+        </header>
+        <p className="mt-4 text-sm text-[var(--ink-soft)]">{error}</p>
       </main>
     );
   }
 
   return (
-    <main className="mx-auto flex w-full max-w-md flex-1 flex-col gap-4 p-4">
-      <h1 className="text-xl font-bold">Session stats</h1>
-      <p className="text-xs opacity-60">
-        Struggle &amp; engagement indicators — derived from session events, not assessments.
+    <main className="mx-auto flex w-full max-w-md flex-1 flex-col gap-4 p-4 pt-5">
+      <header className="flex flex-wrap items-center gap-x-3 gap-y-2">
+        <Link href="/" className="btn btn-ghost !px-3 !py-1.5 text-sm" aria-label="Home">
+          ←
+        </Link>
+        <h1 className="font-display text-xl font-extrabold">Session stats</h1>
+        <span className="stamp stamp-ok">Indicators — not assessments</span>
+      </header>
+      <p className="mono-hint">
+        struggle &amp; engagement indicators, derived from session events only
       </p>
       {!stats ? (
-        <p className="text-sm opacity-70">Loading…</p>
+        <p className="text-sm text-[var(--ink-soft)]">Loading…</p>
       ) : (
         <>
           <p className="text-sm">
@@ -240,7 +252,7 @@ export default function StatsPage() {
                 .join(", ")}`}
           </p>
           {CHARTS.map(({ key, title }) => (
-            <section key={key} className="rounded-xl bg-white/5 p-3">
+            <section key={key} className="card p-3">
               <h2 className="mb-2 text-sm font-semibold">{title}</h2>
               <canvas
                 ref={(el) => {
@@ -252,23 +264,17 @@ export default function StatsPage() {
           <div className="flex flex-col gap-2">
             <button
               onClick={() => XLSX.writeFile(buildXlsx(), "session-stats.xlsx")}
-              className="rounded-xl bg-white/10 p-3 font-semibold active:scale-95"
+              className="btn btn-ghost"
             >
               Download XLSX
             </button>
-            <button
-              onClick={() => buildPdf().save("session-report.pdf")}
-              className="rounded-xl bg-white/10 p-3 font-semibold active:scale-95"
-            >
+            <button onClick={() => buildPdf().save("session-report.pdf")} className="btn btn-ghost">
               Download PDF
             </button>
-            <button
-              onClick={() => void sendToParent()}
-              className="rounded-xl bg-violet-500 p-3 font-semibold text-white active:scale-95"
-            >
-              Send to parent (Telegram)
+            <button onClick={() => void sendToParent()} className="btn btn-hl">
+              📨 Send to parent (Telegram)
             </button>
-            {delivery && <p className="text-sm opacity-70">{delivery}</p>}
+            {delivery && <p className="text-sm text-[var(--ink-soft)]">{delivery}</p>}
           </div>
         </>
       )}

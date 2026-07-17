@@ -1,26 +1,280 @@
 @import "tailwindcss";
 
+/*
+ * Dislexi theme — strictly the educational "notebook paper" palette from
+ * how_it_works_walkthrough.html. Light-only (paper), no gradients besides
+ * the ruled-paper background. Purple (--ai) is reserved for AI stamps/
+ * accents exactly as in the walkthrough — never as a background gradient.
+ */
 :root {
-  --background: #ffffff;
-  --foreground: #171717;
+  --paper: #fcfbf7;
+  --rule: #dee5ec;
+  --margin: #f0bdbd;
+  --ink: #22303f;
+  --ink-soft: #5e6e7e;
+  --hl: #ffd34d;
+  --hl-strong: #ffb020;
+  --pen: #2b6cb0;
+  --ai: #7c5cbf;
+  --ok: #2f9e63;
+  --card: #ffffff;
+
+  --background: var(--paper);
+  --foreground: var(--ink);
 }
 
 @theme inline {
   --color-background: var(--background);
   --color-foreground: var(--foreground);
-  --font-sans: var(--font-geist-sans);
-  --font-mono: var(--font-geist-mono);
+  --color-ink: #22303f;
+  --color-ink-soft: #5e6e7e;
+  --color-paper: #fcfbf7;
+  --color-hl: #ffd34d;
+  --color-hl-strong: #ffb020;
+  --color-pen: #2b6cb0;
+  --color-ai: #7c5cbf;
+  --color-ok: #2f9e63;
+  --font-sans: var(--font-plex-sans);
+  --font-mono: var(--font-plex-mono);
 }
 
-@media (prefers-color-scheme: dark) {
-  :root {
-    --background: #0a0a0a;
-    --foreground: #ededed;
-  }
+html {
+  color-scheme: light;
+  scroll-behavior: smooth;
 }
 
 body {
-  background: var(--background);
-  color: var(--foreground);
-  font-family: Arial, Helvetica, sans-serif;
+  color: var(--ink);
+  font-family: var(--font-plex-sans), sans-serif;
+  line-height: 1.55;
+  background:
+    linear-gradient(90deg, transparent 63px, var(--margin) 63px, var(--margin) 65px, transparent 65px),
+    repeating-linear-gradient(180deg, var(--paper) 0px, var(--paper) 31px, var(--rule) 31px, var(--rule) 32px);
+  background-color: var(--paper);
+}
+
+@media (max-width: 720px) {
+  body {
+    background: repeating-linear-gradient(
+      180deg,
+      var(--paper) 0px,
+      var(--paper) 31px,
+      var(--rule) 31px,
+      var(--rule) 32px
+    );
+    background-color: var(--paper);
+  }
+}
+
+/* ---------- shared components (walkthrough design language) ---------- */
+
+.font-display {
+  font-family: var(--font-bricolage), var(--font-plex-sans), sans-serif;
+}
+
+.card {
+  background: var(--card);
+  border: 1.5px solid var(--ink);
+  border-radius: 14px;
+  box-shadow: 4px 4px 0 rgba(34, 48, 63, 0.12);
+}
+
+.btn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
+  font-family: var(--font-plex-sans), sans-serif;
+  font-weight: 600;
+  border: 1.5px solid var(--ink);
+  border-radius: 10px;
+  padding: 12px 18px;
+  cursor: pointer;
+  box-shadow: 3px 3px 0 rgba(34, 48, 63, 0.15);
+  transition:
+    transform 0.12s,
+    box-shadow 0.12s;
+}
+.btn:hover {
+  transform: translate(-1px, -1px);
+  box-shadow: 4px 4px 0 rgba(34, 48, 63, 0.18);
+}
+.btn:active {
+  transform: translate(2px, 2px);
+  box-shadow: 1px 1px 0 rgba(34, 48, 63, 0.15);
+}
+.btn:focus-visible {
+  outline: 3px solid var(--pen);
+  outline-offset: 2px;
+}
+.btn:disabled {
+  opacity: 0.45;
+  pointer-events: none;
+}
+.btn-hl {
+  background: var(--hl);
+  color: var(--ink);
+}
+.btn-ink {
+  background: var(--ink);
+  color: #fff;
+}
+.btn-ghost {
+  background: var(--card);
+  color: var(--ink);
+}
+
+.stamp {
+  display: inline-block;
+  font-family: var(--font-plex-mono), monospace;
+  font-size: 10.5px;
+  font-weight: 500;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  border: 1.5px solid;
+  border-radius: 6px;
+  padding: 4px 9px;
+  transform: rotate(-1.5deg);
+}
+.stamp-det {
+  color: var(--pen);
+  border-color: var(--pen);
+  background: rgba(43, 108, 176, 0.06);
+}
+.stamp-ai {
+  color: var(--ai);
+  border-color: var(--ai);
+  background: rgba(124, 92, 191, 0.07);
+}
+.stamp-ok {
+  color: var(--ok);
+  border-color: var(--ok);
+  background: rgba(47, 158, 99, 0.07);
+}
+
+.chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 7px;
+  font-size: 12.5px;
+  font-weight: 500;
+  border: 1.5px solid var(--ink);
+  border-radius: 999px;
+  padding: 5px 11px;
+  background: #fff;
+}
+.chip-mic::before {
+  content: "";
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  background: var(--ok);
+  animation: pulse 1.2s infinite;
+}
+.chip-off::before {
+  content: "";
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  background: var(--rule);
+}
+
+.eyebrow {
+  font-family: var(--font-plex-mono), monospace;
+  font-size: 12px;
+  letter-spacing: 0.14em;
+  text-transform: uppercase;
+  color: var(--ink-soft);
+}
+
+.mono-hint {
+  font-family: var(--font-plex-mono), monospace;
+  font-size: 11.5px;
+  color: var(--ink-soft);
+}
+
+/* Animated marker swipe behind a hero phrase. */
+.swipe {
+  position: relative;
+  white-space: nowrap;
+}
+.swipe::before {
+  content: "";
+  position: absolute;
+  left: -3px;
+  right: -3px;
+  bottom: 6%;
+  height: 52%;
+  background: var(--hl);
+  z-index: -1;
+  transform: skewX(-8deg) scaleX(0);
+  transform-origin: left;
+  animation: swipe 0.7s 0.5s ease-out forwards;
+  border-radius: 3px;
+}
+
+@keyframes swipe {
+  to {
+    transform: skewX(-8deg) scaleX(1);
+  }
+}
+@keyframes pulse {
+  0%,
+  100% {
+    opacity: 1;
+  }
+  50% {
+    opacity: 0.3;
+  }
+}
+@keyframes fadein {
+  from {
+    opacity: 0;
+    transform: translateY(6px);
+  }
+  to {
+    opacity: 1;
+    transform: none;
+  }
+}
+@keyframes thinkbounce {
+  0%,
+  80%,
+  100% {
+    transform: translateY(0);
+    opacity: 0.4;
+  }
+  40% {
+    transform: translateY(-4px);
+    opacity: 1;
+  }
+}
+
+.fadein {
+  animation: fadein 0.35s ease;
+}
+
+/* "AI thinking" dots (tutoring). */
+.think-dot {
+  width: 7px;
+  height: 7px;
+  border-radius: 50%;
+  background: var(--ai);
+  animation: thinkbounce 1.2s infinite;
+}
+.think-dot:nth-child(2) {
+  animation-delay: 0.15s;
+}
+.think-dot:nth-child(3) {
+  animation-delay: 0.3s;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  *,
+  *::before,
+  *::after {
+    animation-duration: 0.01ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.01ms !important;
+  }
 }

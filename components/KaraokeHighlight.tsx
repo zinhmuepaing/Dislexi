@@ -60,7 +60,7 @@ export function KaraokeHighlight({
   const r = subBoxFor(block, activeCharStart, activeCharLength);
   return (
     <div
-      className="absolute rounded-sm bg-yellow-300/50 outline outline-2 outline-yellow-400 transition-all duration-75"
+      className="absolute rounded-sm bg-[rgba(255,211,77,0.5)] outline outline-2 outline-[var(--hl-strong)] transition-all duration-75"
       style={{
         left: `${(r.x / frameWidth) * 100}%`,
         top: `${(r.y / frameHeight) * 100}%`,

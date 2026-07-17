@@ -58,8 +58,8 @@ export function GraphemeSweep({
             key={i}
             className={`absolute rounded-sm transition-all duration-150 ${
               active
-                ? "bg-sky-400/60 outline outline-2 outline-sky-500"
-                : "bg-sky-200/20"
+                ? "bg-[rgba(255,211,77,0.6)] outline outline-2 outline-[var(--hl-strong)]"
+                : "bg-[rgba(43,108,176,0.12)]"
             }`}
             style={{
               left: `${(r.x / frameWidth) * 100}%`,

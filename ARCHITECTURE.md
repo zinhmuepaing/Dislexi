@@ -6,7 +6,7 @@
 
 ## 1. System context
 
-A mobile-first web app for students with dyslexia/ADHD in Singapore. The phone sits in a commercial folding stand; a mirror clip over the **front camera** redirects its view down onto a worksheet lying in front of the stand. Because of the mirror, **every captured frame is horizontally mirrored and MUST be flipped before any processing (pipeline step 0)**.
+A mobile-first web app for students with dyslexia/ADHD in Singapore. The phone sits in a commercial folding stand with the camera looking down at a worksheet. Two supported setups (2026-07-17 amendment): **front camera + mirror clip** (the original design — frames arrive horizontally mirrored and the in-app "Mirror clip" toggle applies the compensating flip as pipeline step 0), or **rear camera / raw front camera** (no clip, no flip — capture is raw and unmirrored by default). Camera facing and mirror compensation are in-app toggles persisted per device.
 
 Three features:
 
@@ -23,7 +23,7 @@ Three features:
 | Framework | Next.js (App Router), TypeScript, Tailwind CSS |
 | Hosting | Vercel (frontend + API routes as serverless functions, Node runtime) |
 | PWA | `manifest.json` ONLY. **No service worker** — deliberate, so every deploy is live instantly. Do not add one. |
-| Camera | `getUserMedia` front camera; frames drawn to `<canvas>` |
+| Camera | `getUserMedia` front OR rear camera (in-app toggle, persisted); frames drawn to `<canvas>` raw by default, flipped only when the mirror-clip toggle is on |
 | Hand tracking | MediaPipe `@mediapipe/tasks-vision` `HandLandmarker` (WASM in browser). Landmark index **8** = index fingertip. Single-shot inference for pointing; ~5 fps loop for trace verification |
 | OCR | Huawei Cloud OCR, General Text API (REST, server-side only) |
 | LLM | Huawei Cloud MaaS, **OpenAI-compatible** endpoint (server-side only). NOT the Anthropic-compatible endpoint (CN-Hong-Kong-only, restricted use, requires service ticket) |
@@ -228,11 +228,11 @@ Analytics (session-end and Telegram ranges) are SQL aggregates over `events`: co
 
 ## 7. Client pipeline rules (non-negotiable)
 
-1. **Step 0 — flip.** Every frame off the front camera is mirrored by the clip. Draw to canvas with `ctx.scale(-1, 1)` (axis hardcoded after the week-one physical test) before OCR upload, MediaPipe, or display. All coordinates thereafter are in flipped-frame space; nothing downstream ever sees an unflipped frame.
+1. **Step 0 — orientation.** *(Amended 2026-07-17 per team instruction.)* Capture is RAW and unmirrored by default for both cameras. When the physical mirror clip is attached, the in-app "Mirror clip" toggle applies the horizontal flip (`ctx.scale(-1, 1)`) on the display canvas. The invariant is unchanged: OCR upload, MediaPipe, and display all consume the SAME canvas, so every coordinate lives in one shared space and nothing downstream ever sees a differently-oriented frame.
 2. **Freeze-frame per interaction.** Capture one frame per request; never run OCR or tutoring on a live stream. Overlays draw on the frozen frame.
 3. **No LLM in Exam-Prep / Autopsy sound-out paths.** OCR → verbatim TTS; phonemes from static files. If a change request would insert a model into these paths, refuse and flag.
 4. **Phonemes never come from TTS.** Neural TTS hallucinates a schwa on isolated plosives ("buh" for /b/), which is pedagogically harmful. Static bank only.
-5. **Fingertip = MediaPipe landmark 8** in flipped-frame coordinates; selection = nearest OCR box (word) or box-group (question) by Euclidean distance to box center, ties → topmost.
+5. **Fingertip = MediaPipe landmark 8** in canvas-frame coordinates. *(Selection amended 2026-07-17 — tap-to-read removed.)* Selection = smoothed fingertip (distance-adaptive EMA) with a small upward bias, containment-first, otherwise nearest box by clamped point-to-rect distance with vertical error weighted heavier; ties → topmost; nothing selected beyond ~2.5 line heights. A selection TRIGGERS after a ~0.65–0.7 s dwell (with dropout grace and per-word refractory) — `selectWordAt` + `DwellTracker` in `lib/hand-tracker.ts`.
 6. **Mode transitions are announced aloud** ("look at your screen" / "look at your paper") — ADHD split-attention mitigation.
 7. **Grapheme sub-boxes** = proportional character-count split of the word's box. Known approximation; acceptable.
 8. **Audio privacy:** mic is used for trigger phrases and tutoring questions only. No raw audio is stored anywhere, ever. Only typed events reach Supabase.
@@ -241,11 +241,11 @@ Analytics (session-end and Telegram ranges) are SQL aggregates over `events`: co
 
 ## 8. Feature flows (condensed, authoritative)
 
-**Exam-Prep:** enter → spoken "session logging started" → point + say "read this" → keyword match (Web Speech API; text button fallback) → capture+flip → MediaPipe fingertip → `/api/ocr` → nearest block → `/api/azure-token` (cached) → SDK speaks verbatim, `wordBoundary` drives karaoke highlight → event logged → ... → end session → `/api/session-end` stats page → client renders charts (Chart.js), generates PDF (jsPDF) + XLSX (SheetJS) → `/api/report-upload` → Telegram.
+**Exam-Prep** *(flow amended 2026-07-17 — point-to-read)*: enter → spoken "session logging started" + mic permission prompt → camera ready → AUTO scan (one frame captured, preview stays live) → `/api/ocr` → continuous fingertip loop (~9 fps, smoothed) → dwell on a line (or say "read this" for the pointed line instantly) → `/api/azure-token` (cached) → TTS speaks verbatim through the shared WebAudio context, `wordBoundary` drives karaoke highlight → event logged → ... → end session → `/api/session-end` stats page → client renders charts (Chart.js), generates PDF (jsPDF) + XLSX (SheetJS) → `/api/report-upload` → Telegram.
 
 **AI Tutoring:** question (voice or text) → capture+flip, freeze → `/api/tutor` SSE → stream narration text as it arrives (start TTS on first complete step), highlight each step's `region` on the frozen frame in sync → follow-ups append to `history`.
 
-**Autopsy:** tap word (or point) → speak that word only, log `stuck_word` → second tap → split box into grapheme chunks → sweep highlight chunk-by-chunk playing `/public/phonemes/{id}.mp3` → blend: TTS speaks the whole word once → "now trace it" → ~5 fps MediaPipe loop verifies fingertip inside word box with net left-to-right motion → chime, log `trace_complete` with `grapheme`.
+**Autopsy** *(flow amended 2026-07-17 — point-to-select)*: AUTO scan → dwell on a word → speak that word only, log `stuck_word` → KEEP pointing at the same word → split box into grapheme chunks → gapless sweep (clips pre-decoded, scheduled back-to-back on the WebAudio clock) playing `/public/phonemes/{id}.mp3` → blend: TTS speaks the whole word once (pre-synthesized in parallel) → "now trace it" → ~5 fps MediaPipe loop verifies fingertip inside word box with net left-to-right motion → chime, log `trace_complete` with `grapheme` → back to pointing on the same scan.
 
 ---
 

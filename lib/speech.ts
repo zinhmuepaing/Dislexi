@@ -3,18 +3,31 @@
 /**
  * Client-side Azure Speech TTS helper (ARCHITECTURE.md §5.4).
  *
- * The browser runs the Speech SDK directly, authenticated with a short-lived
- * token from GET /api/azure-token (cached here ~8 min; the subscription key
- * never ships to the client). `wordBoundary` (textOffset/wordLength) is the
- * ENTIRE karaoke sync mechanism — highlights are scheduled at each event's own
- * audioOffset relative to playback start; no timing estimator.
+ * Authenticated with a short-lived token from GET /api/azure-token (cached
+ * here ~8 min; the subscription key never ships to the client).
+ *
+ * Synthesis and playback are deliberately SPLIT: the SDK synthesizes to an
+ * audio buffer (no speaker destination), and playback goes through the shared
+ * WebAudio context (lib/audio.ts). This fixes the "no audio in AI tutoring"
+ * bug — narration that starts after a long SSE wait used to be silently
+ * blocked by browser autoplay policy because the SDK's own audio element
+ * started outside a user-activation window. A running AudioContext has no
+ * such restriction, and buffers can be scheduled gaplessly.
+ *
+ * `wordBoundary` (textOffset/wordLength) remains the ENTIRE karaoke sync
+ * mechanism — events are captured at synthesis time and re-scheduled against
+ * the WebAudio clock at playback; no timing estimator.
  *
  * Exam-Prep rule (§5.4): callers pass the OCR text VERBATIM.
  */
 
 import * as sdk from "microsoft-cognitiveservices-speech-sdk";
+import { audioContext, decodeAudio } from "@/lib/audio";
 
 const TOKEN_TTL_MS = 8 * 60 * 1000;
+/** Natural Singapore-English neural voice (Azure southeastasia). */
+const VOICE = "en-SG-LunaNeural";
+const SYNTH_CACHE_MAX = 24;
 
 let cachedToken: { token: string; region: string; fetchedAt: number } | null = null;
 
@@ -27,98 +40,176 @@ async function getToken(): Promise<{ token: string; region: string }> {
   return cachedToken;
 }
 
+/** Warm the token cache on page entry so the first utterance starts fast. */
+export function primeSpeech(): void {
+  void getToken().catch(() => {});
+}
+
+export interface WordBoundary {
+  offsetMs: number;
+  charStart: number;
+  charLength: number;
+}
+
+export interface SynthesizedSpeech {
+  buffer: AudioBuffer;
+  boundaries: WordBoundary[];
+}
+
 export interface SpeakCallbacks {
   /** Fires per spoken word, scheduled at the word's audioOffset in playback. */
   onWordBoundary?: (charStart: number, charLength: number) => void;
 }
 
-interface ActiveUtterance {
-  synth: sdk.SpeechSynthesizer;
-  player: sdk.SpeakerAudioDestination;
-  timers: ReturnType<typeof setTimeout>[];
-  /** Settles the utterance's promise so awaiting callers never hang. */
-  settle: () => void;
+const synthCache = new Map<string, Promise<SynthesizedSpeech>>();
+
+/**
+ * Synthesize `text` to a decoded buffer + word boundaries, without playing.
+ * Cached (LRU-ish) — repeated words (autopsy speak → blend) skip the network.
+ */
+export function synthesizeSpeech(text: string): Promise<SynthesizedSpeech> {
+  const cached = synthCache.get(text);
+  if (cached) return cached;
+
+  const job = (async () => {
+    const { token, region } = await getToken();
+    const config = sdk.SpeechConfig.fromAuthorizationToken(token, region);
+    config.speechSynthesisVoiceName = VOICE;
+    // MP3 keeps payloads small; decodeAudioData handles it everywhere.
+    config.speechSynthesisOutputFormat =
+      sdk.SpeechSynthesisOutputFormat.Audio24Khz48KBitRateMonoMp3;
+    config.setProperty(sdk.PropertyId.SpeechServiceResponse_RequestWordBoundary, "true");
+
+    // null audio config = synthesize to result.audioData, no auto-playback.
+    const synth = new sdk.SpeechSynthesizer(config, null as unknown as sdk.AudioConfig);
+    const boundaries: WordBoundary[] = [];
+    synth.wordBoundary = (_, e) => {
+      boundaries.push({
+        offsetMs: e.audioOffset / 10_000, // 100-ns ticks → ms
+        charStart: e.textOffset,
+        charLength: e.wordLength,
+      });
+    };
+
+    const audioData = await new Promise<ArrayBuffer>((resolve, reject) => {
+      synth.speakTextAsync(
+        text,
+        (result) => {
+          synth.close();
+          if (result.reason === sdk.ResultReason.SynthesizingAudioCompleted) {
+            resolve(result.audioData);
+          } else {
+            reject(new Error(`TTS failed: ${result.errorDetails || result.reason}`));
+          }
+        },
+        (err) => {
+          synth.close();
+          reject(new Error(String(err)));
+        },
+      );
+    });
+
+    return { buffer: await decodeAudio(audioData), boundaries };
+  })();
+
+  synthCache.set(text, job);
+  job.catch(() => synthCache.delete(text)); // never cache failures
+  if (synthCache.size > SYNTH_CACHE_MAX) {
+    const oldest = synthCache.keys().next().value;
+    if (oldest !== undefined) synthCache.delete(oldest);
+  }
+  return job;
 }
 
-let active: ActiveUtterance | null = null;
+/** Generation counter: any stop/new-speak invalidates in-flight sequences. */
+let speakGen = 0;
+let activeStop: (() => void) | null = null;
 
-/** Stop any in-flight utterance immediately (its speak() promise resolves). */
+/** Stop any in-flight utterance/sequence immediately (promises resolve). */
 export function stopSpeaking(): void {
-  if (!active) return;
-  const settle = active.settle;
-  active.timers.forEach(clearTimeout);
-  try {
-    active.player.pause();
-    active.player.close();
-  } catch {
-    /* already closed */
-  }
-  try {
-    active.synth.close();
-  } catch {
-    /* already closed */
-  }
-  active = null;
-  settle();
+  speakGen++;
+  const stop = activeStop;
+  activeStop = null;
+  stop?.();
+}
+
+/** Play an already-synthesized buffer; resolves on end or stop. */
+function playSynthesized(s: SynthesizedSpeech, callbacks?: SpeakCallbacks): Promise<void> {
+  return new Promise((resolve) => {
+    const context = audioContext();
+    const src = context.createBufferSource();
+    src.buffer = s.buffer;
+    src.connect(context.destination);
+
+    const startAt = context.currentTime + 0.03;
+    const leadMs = (startAt - context.currentTime) * 1000;
+    const timers: ReturnType<typeof setTimeout>[] = [];
+    const cb = callbacks?.onWordBoundary;
+    if (cb) {
+      for (const b of s.boundaries) {
+        timers.push(setTimeout(() => cb(b.charStart, b.charLength), leadMs + b.offsetMs));
+      }
+    }
+
+    let settled = false;
+    const finish = () => {
+      if (settled) return;
+      settled = true;
+      timers.forEach(clearTimeout);
+      if (activeStop === stop) activeStop = null;
+      resolve();
+    };
+    const stop = () => {
+      try {
+        src.stop();
+      } catch {
+        /* not started */
+      }
+      finish();
+    };
+    activeStop = stop;
+    src.onended = finish;
+    src.start(startAt);
+  });
 }
 
 /**
- * Speak `text` through the device speaker; resolves when playback finishes.
- * A new call cancels the previous utterance.
+ * Speak `text` through the shared audio context; resolves when playback
+ * finishes. A new call (or stopSpeaking) cancels the previous utterance.
  */
-export function speak(text: string, callbacks?: SpeakCallbacks): Promise<void> {
+export async function speak(text: string, callbacks?: SpeakCallbacks): Promise<void> {
   stopSpeaking();
-  return new Promise((resolve, reject) => {
-    getToken()
-      .then(({ token, region }) => {
-        const config = sdk.SpeechConfig.fromAuthorizationToken(token, region);
-        config.setProperty(
-          sdk.PropertyId.SpeechServiceResponse_RequestWordBoundary,
-          "true",
-        );
-        const player = new sdk.SpeakerAudioDestination();
-        const synth = new sdk.SpeechSynthesizer(config, sdk.AudioConfig.fromSpeakerOutput(player));
-        const utterance: ActiveUtterance = { synth, player, timers: [], settle: resolve };
-        active = utterance;
+  const gen = speakGen;
+  const s = await synthesizeSpeech(text);
+  if (gen !== speakGen) return; // superseded while synthesizing
+  await playSynthesized(s, callbacks);
+}
 
-        let playbackStart: number | null = null;
-        player.onAudioStart = () => {
-          playbackStart = performance.now();
-        };
-        player.onAudioEnd = () => {
-          if (active === utterance) stopSpeaking(); // settles via utterance.settle
-        };
-
-        synth.wordBoundary = (_, e) => {
-          const cb = callbacks?.onWordBoundary;
-          if (!cb) return;
-          // audioOffset is in 100-ns ticks; schedule against playback start.
-          const offsetMs = e.audioOffset / 10_000;
-          const elapsed = playbackStart === null ? 0 : performance.now() - playbackStart;
-          const timer = setTimeout(
-            () => cb(e.textOffset, e.wordLength),
-            Math.max(0, offsetMs - elapsed),
-          );
-          utterance.timers.push(timer);
-        };
-
-        synth.speakTextAsync(
-          text,
-          (result) => {
-            if (result.reason === sdk.ResultReason.Canceled && active === utterance) {
-              reject(new Error("TTS canceled")); // before stopSpeaking so reject wins
-              stopSpeaking();
-            }
-            // Success: wait for player.onAudioEnd (audio keeps playing after synthesis).
-          },
-          (err) => {
-            reject(new Error(String(err)));
-            if (active === utterance) stopSpeaking();
-          },
-        );
-      })
-      .catch(reject);
-  });
+/**
+ * Narrate a list of texts as one smooth sequence: every step is synthesized
+ * up front (in parallel), then played back-to-back with a short natural
+ * breath between steps. `onStepStart(i)` fires as step i begins (or is
+ * skipped on synth failure). Cancelled by stopSpeaking()/speak().
+ */
+export async function speakSteps(
+  texts: string[],
+  onStepStart?: (index: number) => void,
+  gapMs = 350,
+): Promise<void> {
+  stopSpeaking();
+  const gen = speakGen;
+  const jobs = texts.map((t) => synthesizeSpeech(t).catch(() => null));
+  for (let i = 0; i < jobs.length; i++) {
+    const s = await jobs[i];
+    if (gen !== speakGen) return;
+    onStepStart?.(i);
+    if (!s) continue;
+    await playSynthesized(s);
+    if (gen !== speakGen) return;
+    if (i < jobs.length - 1 && gapMs > 0) {
+      await new Promise((r) => setTimeout(r, gapMs));
+    }
+  }
 }
 
 /** Browser-native TTS for UI cues (mode announcements, §7 rule 6) — not content. */

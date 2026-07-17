@@ -1,6 +1,49 @@
 # PROGRESS.md — Dislexi build session log
 
-## RESUME FROM HERE
+## RESUME FROM HERE (2026-07-17, third session — interaction & UI rework)
+
+Repo/remote gap checked: local `main` == `origin/main`; production
+(dislexi.vercel.app) was verified same day (see below). This session reworked
+the interaction model and UI per team instruction (goal directive):
+
+1. **Camera**: front/rear toggle + "Mirror clip" toggle in `CameraStage`
+   (persisted in localStorage). Capture is now RAW/unmirrored by default for
+   both cameras; the flip runs only when the mirror-clip toggle is ON.
+   ARCHITECTURE.md §7 rule 1 amended accordingly. 720p ideal constraints.
+2. **Point-to-read (tap removed)**: Exam-Prep and Autopsy auto-scan when the
+   camera is ready (one frame, preview stays live), then run a continuous
+   ~9 fps fingertip loop — smoothed (adaptive EMA), containment-first
+   selection with upward fingertip bias + max-distance reject, dwell-to-
+   trigger with dropout grace and per-word refractory (§7 rule 5 amended).
+   Autopsy escalates by KEEP-pointing at the spoken word → gapless sound-out
+   → trace (unchanged) → resumes pointing on the same scan.
+3. **Audio engine**: new `lib/audio.ts` (shared AudioContext unlocked on
+   first gesture; decoded-clip cache; gapless `playSequence`; chime).
+   `lib/speech.ts` rewritten to synthesize Azure TTS to buffers (null
+   AudioConfig) and play via WebAudio — THIS FIXES THE SILENT AI-TUTORING
+   NARRATION (autoplay policy blocked the SDK's own player after long SSE
+   waits). Word-boundary karaoke preserved; `speakSteps` pre-synthesizes all
+   steps for smooth narration; voice = en-SG-LunaNeural; synth LRU cache.
+4. **Tutoring UI**: raw SSE deltas/JSON are no longer rendered — friendly
+   animated "thinking" card until steps arrive; step cards replayable;
+   retake/new-photo button; mic permission primed on entry.
+5. **UI overhaul**: full walkthrough theme (paper/ink/yellow, Bricolage +
+   IBM Plex via next/font, notebook-ruled background, card/btn/stamp/chip
+   system in globals.css, light-only). Home page redesigned (animated
+   karaoke hero, feature cards with det/ai stamps). Stats page restyled +
+   chart colors on palette. No purple gradients (purple = AI stamp only).
+
+Gates: `npx tsx scripts/logic-tests.mts` ✅ · `npm run build` ✅ ·
+`npx eslint .` ✅ (1 intentional cancellation-counter warning, precedent) ·
+prod-server smoke via browser: home/exam-prep/tutoring/autopsy render, camera
++ mic prompt immediately on entry, graceful degradation without devices ✅.
+
+**Needs on-device validation** (can't be done here): dwell timings (0.65/0.7 s)
+and upward-bias factor on the real phone; TTS voice choice; mirror-clip
+default-OFF matches the team's current physical setup (toggle if not);
+rear-camera image quality for OCR.
+
+## RESUME FROM HERE (2026-07-17, second session)
 
 All verification gates PASSED on 2026-07-17 (second session — shell recovered):
 

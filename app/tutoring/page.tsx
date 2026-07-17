@@ -2,16 +2,24 @@
 
 /**
  * AI Tutoring (ARCHITECTURE.md §8): question (voice or text — text input is a
- * permanent fallback, §9.5) → capture+flip, freeze (§7 rules 1–2) →
- * POST /api/tutor (SSE) → stream narration text as it arrives, then narrate
- * each step via Azure Speech with its region highlighted on the frozen frame
- * in sync. Follow-ups append to `history` and reuse the same frozen frame.
- * Regions are normalized 0–1 relative to the submitted image (§5.3).
+ * permanent fallback, §9.5) → capture+freeze (§7 rule 2) → POST /api/tutor
+ * (SSE) → THINKING state (raw model output is NEVER rendered — the stream is
+ * consumed silently until the final steps frame arrives) → narrate each step
+ * via Azure TTS with its region highlighted on the frozen frame in sync.
+ * Follow-ups append to `history` and reuse the same frozen frame. Regions are
+ * normalized 0–1 relative to the submitted image (§5.3).
+ *
+ * Narration plays through the shared WebAudio context (lib/audio.ts): all
+ * step buffers are synthesized up front and played back-to-back, so audio
+ * starts reliably even after a long SSE wait (autoplay-policy fix) and the
+ * step-to-step transitions are smooth.
  */
 
 import { useEffect, useRef, useState } from "react";
+import Link from "next/link";
 import { CameraStage, CameraStageHandle, CapturedFrame } from "@/components/CameraStage";
-import { speak, stopSpeaking, announce } from "@/lib/speech";
+import { speak, stopSpeaking, announce, primeSpeech, speakSteps } from "@/lib/speech";
+import { installAudioUnlock } from "@/lib/audio";
 import { SessionLogger } from "@/lib/event-queue";
 
 interface TutorStep {
@@ -37,42 +45,51 @@ interface DictationCtor {
   };
 }
 
+const THINKING_LINES = [
+  "reading your worksheet…",
+  "thinking through the steps…",
+  "matching each step to the page…",
+  "almost there…",
+];
+
 export default function TutoringPage() {
   const stage = useRef<CameraStageHandle>(null);
   const logger = useRef<SessionLogger | null>(null);
-  const narrationRun = useRef(0); // bump to cancel an in-flight narration loop
   const [question, setQuestion] = useState("");
   const [frame, setFrame] = useState<CapturedFrame | null>(null);
-  const [streamText, setStreamText] = useState("");
   const [steps, setSteps] = useState<TutorStep[]>([]);
   const [activeStep, setActiveStep] = useState(-1);
   const [history, setHistory] = useState<TutorTurn[]>([]);
   const [busy, setBusy] = useState(false);
+  const [thinkingLine, setThinkingLine] = useState(0);
+  const [errorMsg, setErrorMsg] = useState<string | null>(null);
   const [dictating, setDictating] = useState(false);
 
   useEffect(() => {
     announce("Look at your screen. Ask me about your worksheet."); // §7 rule 6
+    installAudioUnlock();
+    primeSpeech();
     SessionLogger.start("tutoring").then((l) => (logger.current = l));
+    // Prompt for the microphone immediately on entry (§7 rule 8: questions
+    // only, nothing recorded) so dictation later starts without a modal.
+    navigator.mediaDevices
+      ?.getUserMedia({ audio: true })
+      .then((s) => s.getTracks().forEach((t) => t.stop()))
+      .catch(() => {
+        /* text input is the permanent fallback (§9.5) */
+      });
     return () => {
-      narrationRun.current++;
       stopSpeaking();
     };
   }, []);
 
-  /** Speak each step in order, advancing the highlight in sync. */
-  async function narrate(allSteps: TutorStep[]) {
-    const run = ++narrationRun.current;
-    for (let i = 0; i < allSteps.length; i++) {
-      if (narrationRun.current !== run) return; // superseded
-      setActiveStep(i);
-      try {
-        await speak(allSteps[i].say);
-      } catch (err) {
-        console.error("narration failed:", err);
-        return; // highlights stay tappable as the fallback
-      }
-    }
-  }
+  // Rotate the friendly thinking lines while waiting on the model
+  // (reset to line 0 happens in ask(), not here — avoids a cascading render).
+  useEffect(() => {
+    if (!busy) return;
+    const t = setInterval(() => setThinkingLine((i) => (i + 1) % THINKING_LINES.length), 2200);
+    return () => clearInterval(t);
+  }, [busy]);
 
   async function ask() {
     if (!question.trim() || busy) return;
@@ -81,11 +98,11 @@ export default function TutoringPage() {
     // frozen frame so regions keep referring to the same image.
     const captured = frame ?? stage.current?.captureFrame() ?? null;
     if (!captured) return;
-    narrationRun.current++;
     stopSpeaking();
     setFrame(captured);
+    setThinkingLine(0);
     setBusy(true);
-    setStreamText("");
+    setErrorMsg(null);
     setSteps([]);
     setActiveStep(-1);
     logger.current?.log({ type: "tutor_question", word: question });
@@ -102,7 +119,6 @@ export default function TutoringPage() {
       const decoder = new TextDecoder();
       let buffer = "";
       let finalSteps: TutorStep[] = [];
-      let fullText = "";
 
       while (true) {
         const { done, value } = await reader.read();
@@ -118,10 +134,8 @@ export default function TutoringPage() {
             steps?: TutorStep[];
             error?: string;
           };
-          if (msg.delta) {
-            fullText += msg.delta;
-            setStreamText(fullText);
-          }
+          // NOTE: msg.delta (raw model output) is deliberately NOT rendered —
+          // the UI shows the friendly thinking state until steps arrive.
           if (msg.steps) finalSteps = msg.steps;
           if (msg.error) throw new Error(msg.error);
         }
@@ -134,10 +148,18 @@ export default function TutoringPage() {
         { role: "assistant", content: JSON.stringify({ steps: finalSteps }) },
       ]);
       setQuestion("");
-      void narrate(finalSteps);
+      if (finalSteps.length === 0) {
+        setErrorMsg("I couldn't work that one out — try asking in a different way.");
+      } else {
+        // Pre-synthesized, gapless narration; highlight advances per step.
+        void speakSteps(
+          finalSteps.map((s) => s.say),
+          (i) => setActiveStep(i),
+        );
+      }
     } catch (err) {
       console.error(err);
-      setStreamText("Sorry, tutoring failed — please try again.");
+      setErrorMsg("Sorry, tutoring hit a snag — please ask again.");
     } finally {
       setBusy(false);
     }
@@ -167,15 +189,33 @@ export default function TutoringPage() {
     }
   }
 
+  /** New photo: unfreeze and start a fresh conversation about a new frame. */
+  function retake() {
+    stopSpeaking();
+    stage.current?.unfreeze();
+    setFrame(null);
+    setSteps([]);
+    setActiveStep(-1);
+    setHistory([]);
+    setErrorMsg(null);
+  }
+
   const region = activeStep >= 0 ? steps[activeStep]?.region : null;
 
   return (
-    <main className="mx-auto flex w-full max-w-md flex-1 flex-col gap-4 p-4">
-      <h1 className="text-xl font-bold">AI Tutoring</h1>
+    <main className="mx-auto flex w-full max-w-md flex-1 flex-col gap-4 p-4 pt-5">
+      <header className="flex flex-wrap items-center gap-x-3 gap-y-2">
+        <Link href="/" className="btn btn-ghost !px-3 !py-1.5 text-sm" aria-label="Back to features">
+          ←
+        </Link>
+        <h1 className="font-display text-xl font-extrabold">AI Tutoring</h1>
+        <span className="stamp stamp-ai">AI explains here — never in Exam-Prep</span>
+      </header>
+
       <CameraStage ref={stage}>
         {region && (
           <div
-            className="absolute rounded-md bg-sky-400/30 outline outline-2 outline-sky-400 transition-all"
+            className="absolute rounded-md bg-[rgba(255,211,77,0.35)] outline outline-2 outline-[var(--hl-strong)] transition-all"
             style={{
               left: `${region.x * 100}%`,
               top: `${region.y * 100}%`,
@@ -192,48 +232,70 @@ export default function TutoringPage() {
           onChange={(e) => setQuestion(e.target.value)}
           onKeyDown={(e) => e.key === "Enter" && ask()}
           placeholder="Ask about the worksheet…"
-          className="flex-1 rounded-xl border border-white/20 bg-white/5 p-3"
+          className="min-w-0 flex-1 rounded-[10px] border-[1.5px] border-[var(--ink)] bg-white p-3 text-[15px] placeholder:text-[var(--ink-soft)] focus:outline-[3px] focus:outline-[var(--pen)]"
         />
         <button
           onClick={dictate}
           disabled={dictating}
-          className="rounded-xl bg-white/10 px-4 font-semibold disabled:opacity-50 active:scale-95"
+          className="btn btn-ghost !px-4"
           aria-label="Speak your question"
         >
-          {dictating ? "…" : "Mic"}
+          {dictating ? "…" : "🎙"}
         </button>
-        <button
-          onClick={ask}
-          disabled={busy}
-          className="rounded-xl bg-sky-500 px-5 font-semibold text-white disabled:opacity-50 active:scale-95"
-        >
-          {busy ? "…" : "Ask"}
+        <button onClick={ask} disabled={busy || !question.trim()} className="btn btn-hl !px-5">
+          Ask
         </button>
       </div>
 
-      {steps.length > 0 ? (
+      {busy && (
+        <div className="card fadein flex items-center gap-3 p-4" role="status" aria-live="polite">
+          <span className="flex gap-1.5" aria-hidden>
+            <span className="think-dot" />
+            <span className="think-dot" />
+            <span className="think-dot" />
+          </span>
+          <span className="mono-hint !text-[12.5px]">{THINKING_LINES[thinkingLine]}</span>
+        </div>
+      )}
+
+      {errorMsg && !busy && (
+        <div className="card fadein border-[var(--margin)] p-4 text-sm">{errorMsg}</div>
+      )}
+
+      {steps.length > 0 && !busy && (
         <ol className="flex flex-col gap-2">
           {steps.map((s, i) => (
-            <li key={i}>
+            <li key={i} className="fadein">
               <button
                 onClick={() => {
-                  narrationRun.current++; // manual tap takes over from auto-narration
                   stopSpeaking();
                   setActiveStep(i);
                   void speak(s.say).catch(() => {});
                 }}
-                className={`w-full rounded-lg p-3 text-left text-sm ${
-                  i === activeStep ? "bg-sky-500/20 outline outline-1 outline-sky-400" : "bg-white/5"
+                className={`card w-full p-3 text-left text-sm transition-transform active:translate-y-px ${
+                  i === activeStep
+                    ? "!border-[var(--hl-strong)] bg-[rgba(255,211,77,0.18)]"
+                    : ""
                 }`}
               >
-                {i + 1}. {s.say}
+                <span className="mono-hint mr-2 !text-[var(--pen)]">Step {i + 1}</span>
+                {s.say}
               </button>
             </li>
           ))}
         </ol>
-      ) : (
-        streamText && <p className="whitespace-pre-wrap text-xs opacity-50">{streamText}</p>
       )}
+
+      <div className="card flex flex-col gap-1 p-3">
+        <p className="mono-hint">
+          ask by voice or typing · each step glows on the worksheet while it&apos;s explained
+        </p>
+        {frame && (
+          <button onClick={retake} className="mono-hint self-start underline">
+            📷 new photo / new question
+          </button>
+        )}
+      </div>
     </main>
   );
 }

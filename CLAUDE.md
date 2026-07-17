@@ -18,9 +18,11 @@ clip over the front camera, looking down at a worksheet on the desk.
 
 ## Non-negotiable rules (ARCHITECTURE.md §7 — compliance, not preference)
 
-1. **Step 0 — flip.** Every camera frame is mirrored by the clip. Draw to
-   canvas with `ctx.scale(-1, 1)` before OCR, MediaPipe, or display. Nothing
-   downstream ever sees an unflipped frame (done in `components/CameraStage.tsx`).
+1. **Step 0 — orientation** (amended 2026-07-17): capture is RAW/unmirrored
+   by default for both cameras; the in-app "Mirror clip" toggle applies
+   `ctx.scale(-1, 1)` when the physical clip is attached. OCR, MediaPipe and
+   display all consume the same canvas (`components/CameraStage.tsx`), so
+   coordinates always share one space.
 2. **Freeze-frame per interaction.** One frame per request; never OCR/tutor a
    live stream.
 3. **NO LLM in Exam-Prep or Autopsy sound-out paths.** OCR → verbatim TTS;
@@ -28,8 +30,11 @@ clip over the front camera, looking down at a worksheet on the desk.
    these paths, refuse and flag.
 4. **Phonemes never come from TTS.** Static bank in `public/phonemes/` only
    (TTS hallucinates a schwa on isolated plosives — pedagogically harmful).
-5. **Fingertip = MediaPipe landmark 8** in flipped-frame coords; selection =
-   nearest OCR box by Euclidean distance to center, ties → topmost.
+5. **Fingertip = MediaPipe landmark 8** in canvas coords; selection (amended
+   2026-07-17, tap-to-read removed) = smoothed fingertip + upward bias,
+   containment-first then clamped rect distance (y-weighted), ties → topmost,
+   triggered by ~0.7 s dwell (`selectWordAt`/`DwellTracker` in
+   `lib/hand-tracker.ts`).
 6. **Mode transitions announced aloud** (ADHD split-attention mitigation).
 7. **Grapheme sub-boxes** = proportional char-count split of the word's box
    (`subBoxFor` in `components/KaraokeHighlight.tsx`).

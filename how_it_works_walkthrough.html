@@ -1,0 +1,527 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>How It Works — Assistive Reading & Tutoring System</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Bricolage+Grotesque:opsz,wght@12..96,400;12..96,600;12..96,800&family=IBM+Plex+Sans:wght@400;500;600&family=IBM+Plex+Mono:wght@400;500&display=swap" rel="stylesheet">
+<style>
+:root{
+  --paper:#FCFBF7;
+  --rule:#DEE5EC;
+  --margin:#F0BDBD;
+  --ink:#22303F;
+  --ink-soft:#5E6E7E;
+  --hl:#FFD34D;
+  --hl-strong:#FFB020;
+  --pen:#2B6CB0;
+  --ai:#7C5CBF;
+  --ok:#2F9E63;
+  --card:#FFFFFF;
+}
+*{box-sizing:border-box;margin:0;padding:0}
+html{scroll-behavior:smooth}
+body{
+  font-family:'IBM Plex Sans',sans-serif;
+  color:var(--ink);
+  background:
+    linear-gradient(90deg, transparent 63px, var(--margin) 63px, var(--margin) 65px, transparent 65px),
+    repeating-linear-gradient(180deg, var(--paper) 0px, var(--paper) 31px, var(--rule) 31px, var(--rule) 32px);
+  background-color:var(--paper);
+  line-height:1.55;
+  min-height:100vh;
+}
+.wrap{max-width:980px;margin:0 auto;padding:0 24px 80px 88px}
+@media(max-width:720px){
+  body{background:
+    repeating-linear-gradient(180deg, var(--paper) 0px, var(--paper) 31px, var(--rule) 31px, var(--rule) 32px);}
+  .wrap{padding:0 16px 60px 16px}
+}
+
+/* ---------- hero ---------- */
+header{padding:56px 0 8px}
+.eyebrow{
+  font-family:'IBM Plex Mono',monospace;font-size:12px;letter-spacing:.14em;
+  text-transform:uppercase;color:var(--ink-soft);margin-bottom:14px;
+}
+h1{
+  font-family:'Bricolage Grotesque',sans-serif;font-weight:800;
+  font-size:clamp(30px,5vw,52px);line-height:1.08;letter-spacing:-.01em;
+  max-width:19ch;
+}
+.swipe{position:relative;white-space:nowrap}
+.swipe::before{
+  content:"";position:absolute;left:-3px;right:-3px;bottom:6%;height:52%;
+  background:var(--hl);z-index:-1;transform:skewX(-8deg) scaleX(0);
+  transform-origin:left;animation:swipe .7s .5s ease-out forwards;border-radius:3px;
+}
+@keyframes swipe{to{transform:skewX(-8deg) scaleX(1)}}
+.lede{margin-top:16px;font-size:17px;color:var(--ink-soft);max-width:56ch}
+.lede b{color:var(--ink)}
+
+/* karaoke demo line */
+.karaoke{
+  margin-top:26px;background:var(--card);border:1.5px solid var(--ink);
+  border-radius:12px;padding:18px 22px;display:inline-block;
+  box-shadow:4px 4px 0 rgba(34,48,63,.12);
+}
+.karaoke .kt{font-family:'IBM Plex Mono',monospace;font-size:11px;color:var(--ink-soft);letter-spacing:.1em;text-transform:uppercase;display:block;margin-bottom:8px}
+.kline{font-size:clamp(16px,2.6vw,21px);font-weight:500}
+.kw{position:relative;padding:1px 3px;border-radius:3px;transition:background .18s}
+.kw.lit{background:var(--hl)}
+
+/* ---------- setup diagram ---------- */
+.setup{margin-top:44px}
+.setup h2, .modes h2{
+  font-family:'Bricolage Grotesque',sans-serif;font-weight:600;font-size:22px;margin-bottom:6px;
+}
+.setup p{color:var(--ink-soft);font-size:15px;max-width:60ch;margin-bottom:16px}
+.diagram{
+  background:var(--card);border:1.5px solid var(--ink);border-radius:14px;
+  padding:10px;box-shadow:4px 4px 0 rgba(34,48,63,.12);overflow:hidden;
+}
+.diagram svg{width:100%;height:auto;display:block}
+
+/* ---------- mode tabs ---------- */
+.modes{margin-top:56px}
+.modes .sub{color:var(--ink-soft);font-size:15px;margin-bottom:18px;max-width:62ch}
+.tabs{display:flex;gap:10px;flex-wrap:wrap;margin-bottom:22px}
+.tab{
+  font-family:'Bricolage Grotesque',sans-serif;font-weight:600;font-size:15px;
+  border:1.5px solid var(--ink);background:var(--card);color:var(--ink);
+  padding:10px 16px;border-radius:999px;cursor:pointer;
+  box-shadow:3px 3px 0 rgba(34,48,63,.12);transition:transform .12s, box-shadow .12s;
+}
+.tab:hover{transform:translate(-1px,-1px);box-shadow:4px 4px 0 rgba(34,48,63,.16)}
+.tab:focus-visible{outline:3px solid var(--hl-strong);outline-offset:2px}
+.tab.on{background:var(--ink);color:#fff}
+.tab .n{font-family:'IBM Plex Mono',monospace;font-size:11px;opacity:.65;margin-right:6px}
+
+.mode-head{display:flex;align-items:baseline;gap:14px;flex-wrap:wrap;margin-bottom:4px}
+.mode-title{font-family:'Bricolage Grotesque',sans-serif;font-weight:800;font-size:clamp(22px,3.4vw,30px)}
+.mode-tag{color:var(--ink-soft);font-size:14px}
+.controls{display:flex;align-items:center;gap:10px;margin:12px 0 18px}
+.play{
+  border:1.5px solid var(--ink);background:var(--hl);color:var(--ink);
+  font-family:'IBM Plex Sans',sans-serif;font-weight:600;font-size:14px;
+  padding:8px 16px;border-radius:8px;cursor:pointer;box-shadow:3px 3px 0 rgba(34,48,63,.15);
+}
+.play:focus-visible{outline:3px solid var(--pen);outline-offset:2px}
+.hint{font-family:'IBM Plex Mono',monospace;font-size:11.5px;color:var(--ink-soft)}
+
+/* stepper layout */
+.panel{display:grid;grid-template-columns:minmax(260px,360px) 1fr;gap:22px;align-items:start}
+@media(max-width:820px){.panel{grid-template-columns:1fr}}
+.steps{display:flex;flex-direction:column;gap:8px}
+.step{
+  text-align:left;border:1.5px solid transparent;border-radius:10px;background:transparent;
+  padding:12px 14px;cursor:pointer;font-family:inherit;color:var(--ink);
+  display:grid;grid-template-columns:34px 1fr;gap:10px;align-items:start;transition:background .15s;
+}
+.step:hover{background:rgba(255,211,77,.18)}
+.step:focus-visible{outline:3px solid var(--hl-strong);outline-offset:2px}
+.step.on{background:var(--card);border-color:var(--ink);box-shadow:3px 3px 0 rgba(34,48,63,.12)}
+.qn{
+  font-family:'IBM Plex Mono',monospace;font-size:13px;font-weight:500;color:var(--pen);
+  border:1.5px solid var(--pen);border-radius:6px;width:34px;height:26px;
+  display:flex;align-items:center;justify-content:center;background:#fff;
+}
+.step.on .qn{background:var(--pen);color:#fff}
+.st{font-weight:600;font-size:15px;line-height:1.3}
+.sd{font-size:13.5px;color:var(--ink-soft);margin-top:3px}
+.prog{height:3px;background:var(--rule);border-radius:2px;margin-top:8px;overflow:hidden;display:none}
+.step.on .prog{display:block}
+.prog i{display:block;height:100%;width:0;background:var(--hl-strong)}
+
+/* stage */
+.stage{
+  background:var(--card);border:1.5px solid var(--ink);border-radius:16px;
+  min-height:380px;box-shadow:5px 5px 0 rgba(34,48,63,.12);
+  padding:22px;display:flex;flex-direction:column;gap:14px;position:sticky;top:18px;
+}
+@media(max-width:820px){.stage{position:static;min-height:340px}}
+.stage-head{display:flex;justify-content:space-between;align-items:center;gap:10px;flex-wrap:wrap}
+.stage-title{font-family:'Bricolage Grotesque',sans-serif;font-weight:600;font-size:17px}
+.stamp{
+  font-family:'IBM Plex Mono',monospace;font-size:10.5px;font-weight:500;letter-spacing:.06em;
+  text-transform:uppercase;border:1.5px solid;border-radius:6px;padding:4px 9px;
+  transform:rotate(-1.5deg);
+}
+.stamp.det{color:var(--pen);border-color:var(--pen);background:rgba(43,108,176,.06)}
+.stamp.ai{color:var(--ai);border-color:var(--ai);background:rgba(124,92,191,.07)}
+.stamp.ok{color:var(--ok);border-color:var(--ok);background:rgba(47,158,99,.07)}
+.scene{flex:1;display:flex;align-items:center;justify-content:center;animation:fadein .35s ease}
+@keyframes fadein{from{opacity:0;transform:translateY(6px)}to{opacity:1;transform:none}}
+
+/* phone mock */
+.phone{
+  width:min(300px,86%);border:2px solid var(--ink);border-radius:22px;padding:12px 12px 16px;
+  background:#fff;box-shadow:6px 6px 0 rgba(34,48,63,.1);
+}
+.notch{width:56px;height:5px;border-radius:3px;background:var(--rule);margin:0 auto 10px}
+.pscreen{border:1.5px solid var(--rule);border-radius:12px;padding:14px 12px;min-height:190px;background:var(--paper)}
+.wline{font-size:14px;margin:7px 0;font-weight:500}
+.wline .w{padding:1px 3px;border-radius:3px}
+.wline .lit{background:var(--hl)}
+.wline .box{outline:1.5px dashed var(--pen);outline-offset:2px;border-radius:2px}
+.wline .pick{outline:2px solid var(--hl-strong);outline-offset:2px;background:rgba(255,211,77,.4);border-radius:2px}
+.chip{
+  display:inline-flex;align-items:center;gap:7px;font-size:12.5px;font-weight:500;
+  border:1.5px solid var(--ink);border-radius:999px;padding:5px 11px;background:#fff;margin:4px 4px 0 0;
+}
+.chip.mic::before{content:"";width:8px;height:8px;border-radius:50%;background:var(--ok);animation:pulse 1.2s infinite}
+@keyframes pulse{0%,100%{opacity:1}50%{opacity:.3}}
+.bubble{
+  border:1.5px solid var(--ink);border-radius:12px 12px 12px 3px;background:#fff;
+  padding:9px 13px;font-size:13.5px;display:inline-block;max-width:90%;
+}
+.bubble.tg{border-color:#2AABEE;background:#F1FAFF;border-radius:12px 12px 3px 12px}
+.mono{font-family:'IBM Plex Mono',monospace;font-size:11.5px;color:var(--ink-soft)}
+.logline{font-family:'IBM Plex Mono',monospace;font-size:11.5px;padding:3px 0;border-bottom:1px dashed var(--rule);opacity:0;animation:fadein .3s forwards}
+.logline:nth-child(2){animation-delay:.25s}.logline:nth-child(3){animation-delay:.5s}
+.logline:nth-child(4){animation-delay:.75s}.logline:nth-child(5){animation-delay:1s}
+.files{display:flex;gap:8px;margin-top:10px}
+.file{border:1.5px solid var(--ink);border-radius:8px;padding:6px 10px;font-family:'IBM Plex Mono',monospace;font-size:11px;background:#fff;font-weight:500}
+.bars{display:flex;align-items:flex-end;gap:7px;height:70px;margin:8px 0 4px}
+.bar{width:22px;background:var(--pen);border-radius:3px 3px 0 0;transform:scaleY(0);transform-origin:bottom;animation:grow .5s ease forwards}
+.bar.h{background:var(--hl-strong)}
+@keyframes grow{to{transform:scaleY(1)}}
+.chunks{display:flex;gap:8px;justify-content:center;margin:14px 0 6px}
+.chunk{
+  font-family:'Bricolage Grotesque',sans-serif;font-weight:800;font-size:30px;
+  padding:6px 12px;border-radius:8px;border:1.5px dashed var(--rule);transition:all .2s;
+}
+.chunk.lit{background:var(--hl);border-color:var(--ink);border-style:solid;transform:translateY(-4px)}
+.phchip{font-family:'IBM Plex Mono',monospace;font-size:12px;text-align:center;color:var(--ink-soft);min-height:18px}
+.trace{position:relative;text-align:center;margin:10px 0 4px}
+.trace .word{font-family:'Bricolage Grotesque',sans-serif;font-weight:800;font-size:38px;letter-spacing:.06em}
+.trace .fing{position:absolute;top:-8px;left:8%;font-size:26px;animation:tracemove 2.2s ease-in-out infinite}
+@keyframes tracemove{0%{left:8%}90%,100%{left:78%}}
+.ring{
+  width:74px;height:74px;border-radius:50%;border:3px solid var(--ok);color:var(--ok);
+  display:flex;align-items:center;justify-content:center;font-size:32px;margin:0 auto 10px;
+  animation:pop .4s ease;
+}
+@keyframes pop{from{transform:scale(.6);opacity:0}to{transform:scale(1);opacity:1}}
+.center{text-align:center}
+.note{font-size:12.5px;color:var(--ink-soft);text-align:center;max-width:38ch;margin:0 auto}
+.flip-demo{display:flex;align-items:center;justify-content:center;gap:14px}
+.frame{
+  border:1.5px solid var(--ink);border-radius:10px;padding:12px 14px;background:#fff;
+  font-family:'Bricolage Grotesque',sans-serif;font-weight:600;font-size:17px;
+}
+.frame.mir{transform:scaleX(-1);color:var(--ink-soft)}
+.arrow{font-size:22px;color:var(--pen)}
+.ministeps{display:flex;flex-direction:column;gap:7px}
+.ministep{
+  border:1.5px solid var(--rule);border-radius:8px;padding:7px 11px;font-size:13px;background:#fff;
+  opacity:0;animation:fadein .3s forwards;
+}
+.ministep:nth-child(2){animation-delay:.25s}.ministep:nth-child(3){animation-delay:.5s}
+.ministep.hlited{border-color:var(--hl-strong);background:rgba(255,211,77,.25)}
+
+footer{margin-top:64px;border-top:1.5px solid var(--ink);padding-top:18px;
+  display:flex;justify-content:space-between;gap:14px;flex-wrap:wrap}
+footer .mono{font-size:12px}
+
+@media (prefers-reduced-motion: reduce){
+  *,*::before,*::after{animation-duration:.01ms !important;animation-iteration-count:1 !important;transition-duration:.01ms !important}
+}
+</style>
+</head>
+<body>
+<div class="wrap">
+
+<header>
+  <div class="eyebrow">Tech4City 2026 · How it works</div>
+  <h1>Homework help that <span class="swipe">reads the rules</span>, then teaches the word.</h1>
+  <p class="lede">During national exams, students with dyslexia get a human reader who reads questions <b>exactly as written</b>. At home, they get nothing. Our system puts that reader — and a tutor, and a phonics coach — on the phone the family already owns.</p>
+  <div class="karaoke" aria-hidden="true">
+    <span class="kt">Live highlight, synced to the voice</span>
+    <div class="kline" id="karaoke"></div>
+  </div>
+</header>
+
+<section class="setup">
+  <h2>The setup: a stand, a mirror, zero extra computers</h2>
+  <p>The phone sits in an ordinary stand, screen facing the student. A small mirror clip bends the front camera's view straight down onto the worksheet — so the paper stays in front of the child, exactly like a real exam desk.</p>
+  <div class="diagram">
+    <svg viewBox="0 0 640 300" role="img" aria-label="Side view: student at desk, worksheet in front, phone in stand with mirror clip bending the camera view down to the paper">
+      <line x1="24" y1="258" x2="616" y2="258" stroke="#22303F" stroke-width="2.5"/>
+      <!-- worksheet -->
+      <polygon points="150,236 330,236 312,256 132,256" fill="#fff" stroke="#22303F" stroke-width="2"/>
+      <line x1="165" y1="242" x2="310" y2="242" stroke="#DEE5EC" stroke-width="1.6"/>
+      <line x1="160" y1="248" x2="300" y2="248" stroke="#DEE5EC" stroke-width="1.6"/>
+      <rect x="196" y="244" width="46" height="7" fill="#FFD34D"/>
+      <!-- finger -->
+      <circle cx="238" cy="230" r="5" fill="#2B6CB0"/>
+      <line x1="238" y1="230" x2="216" y2="205" stroke="#2B6CB0" stroke-width="2.5" stroke-linecap="round"/>
+      <text x="120" y="196" font-family="IBM Plex Mono" font-size="12" fill="#5E6E7E">student points here</text>
+      <line x1="212" y1="200" x2="185" y2="196" stroke="#5E6E7E" stroke-width="1" stroke-dasharray="2 3"/>
+      <!-- stand -->
+      <polygon points="452,258 512,258 494,168 470,168" fill="#22303F" opacity=".85"/>
+      <rect x="430" y="256" width="100" height="6" rx="3" fill="#22303F"/>
+      <!-- phone -->
+      <rect x="440" y="118" width="56" height="128" rx="10" fill="#fff" stroke="#22303F" stroke-width="2.5" transform="rotate(-8 468 182)"/>
+      <rect x="448" y="128" width="40" height="106" rx="5" fill="#FCFBF7" stroke="#DEE5EC" stroke-width="1.5" transform="rotate(-8 468 182)"/>
+      <rect x="452" y="150" width="30" height="5" fill="#FFD34D" transform="rotate(-8 468 182)"/>
+      <rect x="452" y="162" width="30" height="3" fill="#DEE5EC" transform="rotate(-8 468 182)"/>
+      <rect x="452" y="170" width="24" height="3" fill="#DEE5EC" transform="rotate(-8 468 182)"/>
+      <!-- camera dot -->
+      <circle cx="452" cy="132" r="3.5" fill="#2B6CB0"/>
+      <!-- mirror clip -->
+      <rect x="438" y="96" width="34" height="9" rx="3" fill="#7C5CBF" transform="rotate(-42 455 100)"/>
+      <text x="392" y="70" font-family="IBM Plex Mono" font-size="12" fill="#5E6E7E">mirror clip (45°)</text>
+      <line x1="448" y1="88" x2="440" y2="74" stroke="#5E6E7E" stroke-width="1" stroke-dasharray="2 3"/>
+      <!-- camera path -->
+      <polyline points="452,128 452,102 238,232" fill="none" stroke="#FFB020" stroke-width="2.5" stroke-dasharray="6 5"/>
+      <text x="286" y="130" font-family="IBM Plex Mono" font-size="12" fill="#B77400">camera view, bent down</text>
+      <!-- screen label -->
+      <text x="520" y="176" font-family="IBM Plex Mono" font-size="12" fill="#5E6E7E">screen faces</text>
+      <text x="520" y="191" font-family="IBM Plex Mono" font-size="12" fill="#5E6E7E">the student</text>
+      <line x1="498" y1="180" x2="516" y2="176" stroke="#5E6E7E" stroke-width="1" stroke-dasharray="2 3"/>
+      <!-- student head -->
+      <circle cx="64" cy="176" r="24" fill="#fff" stroke="#22303F" stroke-width="2.5"/>
+      <path d="M 40 220 Q 64 200 88 220 L 88 258 L 40 258 Z" fill="#fff" stroke="#22303F" stroke-width="2.5"/>
+      <text x="34" y="286" font-family="IBM Plex Mono" font-size="12" fill="#5E6E7E">nothing between child and paper</text>
+    </svg>
+  </div>
+</section>
+
+<section class="modes">
+  <h2>Three features, one camera</h2>
+  <p class="sub">Pick a feature, press play, or click through the steps. The blue stamp means the path is fully deterministic — no AI can add, explain, or change a single word. The purple stamp marks where AI reasoning is allowed to live.</p>
+
+  <div class="tabs" role="tablist" id="tabs"></div>
+
+  <div class="mode-head">
+    <div class="mode-title" id="modeTitle"></div>
+    <div class="mode-tag" id="modeTag"></div>
+  </div>
+  <div class="controls">
+    <button class="play" id="playBtn">▶ Play walkthrough</button>
+    <span class="hint">or click any step · ←/→ keys work too</span>
+  </div>
+
+  <div class="panel">
+    <div class="steps" id="steps" role="tablist" aria-label="Steps"></div>
+    <div class="stage">
+      <div class="stage-head">
+        <div class="stage-title" id="stageTitle"></div>
+        <div id="stageStamp"></div>
+      </div>
+      <div class="scene" id="scene"></div>
+    </div>
+  </div>
+</section>
+
+<footer>
+  <span class="mono">3 features · 1 phone · 0 extra computers</span>
+  <span class="mono">No AI anywhere in the exam-reading path — by architecture, not by promise</span>
+</footer>
+</div>
+
+<script>
+/* ---------------- data ---------------- */
+const P = s => `<div class="phone"><div class="notch"></div><div class="pscreen">${s}</div></div>`;
+
+const FEATURES = [
+{
+  name:"Exam-Prep Mode",
+  tag:"Reads exactly what's written — then shows parents the patterns",
+  steps:[
+    {t:"Point and ask", d:"Student points at a question and says \u201cread this\u201d. The mic listens for that trigger only.",
+     stamp:["det","No AI in this path"],
+     scene:()=>P(`<div class="wline"><span class="w">Q1.</span> <span class="w">Ali</span> <span class="w">buys</span> <span class="w">3</span> <span class="w">pens</span>…</div>
+       <div class="wline"><span class="w">Q2.</span> <span class="w">Find</span> <span class="w">the</span> <span class="w">perimeter</span> <span class="w">of</span>…</div>
+       <div class="wline" style="opacity:.45"><span class="w">Q3.</span> <span class="w">A</span> <span class="w">tank</span> <span class="w">holds</span>…</div>
+       <div style="font-size:22px;margin:6px 0 2px">👉 <span class="mono">pointing at Q2</span></div>
+       <div class="bubble">\u201cread this\u201d</div>
+       <div><span class="chip mic">listening for trigger only</span></div>`)},
+    {t:"Snap one frame, flip it", d:"The mirror flips the image, so step zero of every pipeline un-flips it. One line of code, hardcoded once.",
+     stamp:["det","No AI in this path"],
+     scene:()=>`<div><div class="flip-demo"><div class="frame mir">perimeter</div><div class="arrow">→</div><div class="frame">perimeter</div></div>
+       <p class="note" style="margin-top:14px">mirror image in → flipped → normal frame out</p></div>`},
+    {t:"Find the finger, map the words", d:"MediaPipe finds the fingertip. Huawei Cloud OCR returns every word with its exact position box. Nearest box wins.",
+     stamp:["det","No AI in this path"],
+     scene:()=>P(`<div class="wline"><span class="w box">Find</span> <span class="w box">the</span> <span class="w pick">perimeter</span> <span class="w box">of</span> <span class="w box">the</span></div>
+       <div class="wline"><span class="w box">rectangle</span> <span class="w box">below.</span></div>
+       <div style="font-size:20px;margin-top:10px">👉</div>
+       <div class="mono" style="margin-top:8px">fingertip → nearest word box: \u201cperimeter\u201d</div>`)},
+    {t:"Read exactly as written", d:"Text goes straight from OCR to speech. The highlight follows the voice word by word. Nothing is explained, defined, or paraphrased — the pipeline has no component that could.",
+     stamp:["det","No AI in this path"],
+     scene:()=>P(`<div class="wline" id="karaline"><span class="w">Find</span> <span class="w">the</span> <span class="w">perimeter</span> <span class="w">of</span> <span class="w">the</span> <span class="w">rectangle</span> <span class="w">below.</span></div>
+       <div class="mono" style="margin-top:12px">🔊 reading verbatim · highlight synced to voice</div>
+       <div class="mono" style="margin-top:6px">same standard a human exam reader follows</div>`)},
+    {t:"Every request becomes data", d:"Each read and re-read is logged as a timestamped event. No audio is recorded or kept — events only.",
+     stamp:["det","Events only · no audio kept"],
+     scene:()=>P(`<div class="logline">19:02:11 · read · Q2 · \u201cperimeter\u201d</div>
+       <div class="logline">19:02:39 · re-read · Q2</div>
+       <div class="logline">19:04:02 · read · Q4 · word problem</div>
+       <div class="logline">19:04:55 · re-read · Q4</div>
+       <div class="logline">19:05:21 · re-read · Q4</div>
+       <div class="mono" style="margin-top:10px">building the session log…</div>`)},
+    {t:"Session ends → parent loop", d:"An analytics page appears: requests, re-reads, pacing, most-requested words. PDF + Excel export, sent to the parent on Telegram. Parents can ask the bot for weekly or monthly reviews.",
+     stamp:["ai","AI summarises trends — never touches the reading"],
+     scene:()=>P(`<div class="mono">tonight's session</div>
+       <div class="bars"><div class="bar" style="height:40%"></div><div class="bar h" style="height:90%"></div><div class="bar" style="height:35%"></div><div class="bar h" style="height:70%"></div><div class="bar" style="height:25%"></div></div>
+       <div class="mono">re-reads cluster on word problems</div>
+       <div class="files"><span class="file">report.pdf</span><span class="file">stats.xlsx</span></div>
+       <div style="margin-top:12px"><span class="bubble tg">📨 Sent to Mum on Telegram ✓</span></div>`)}
+  ]
+},
+{
+  name:"AI Tutoring",
+  tag:"The thing a $200 reader pen can never do",
+  steps:[
+    {t:"Ask anything", d:"Voice or text. \u201cWhy is 3/4 bigger than 2/3?\u201d",
+     stamp:null,
+     scene:()=>P(`<div class="bubble">\u201cWhy is 3/4 bigger than 2/3?\u201d</div>
+       <div style="margin-top:10px"><span class="chip mic">voice</span><span class="chip">⌨ or type it</span></div>
+       <div class="mono" style="margin-top:12px">text input always available — works on every phone</div>`)},
+    {t:"Freeze the frame, send it", d:"The worksheet photo and the question go to the vision model together.",
+     stamp:["ai","Vision AI — Huawei Cloud MaaS"],
+     scene:()=>`<div class="center"><div class="frame">📄 worksheet frame <span class="mono">(frozen)</span></div>
+       <div class="arrow" style="margin:10px 0">↓</div>
+       <div class="chip">☁ DeepSeek / GLM via Huawei Cloud MaaS</div>
+       <p class="note" style="margin-top:12px">freezing the frame keeps highlights accurate even if the phone wobbles</p></div>`},
+    {t:"Steps come back, with places", d:"The model returns an explanation broken into steps — each step tagged with the region of the page it refers to.",
+     stamp:["ai","Vision AI — Huawei Cloud MaaS"],
+     scene:()=>`<div class="ministeps" style="width:min(320px,92%)">
+       <div class="ministep"><b>Step 1</b> · Make the denominators the same → region: fraction bar</div>
+       <div class="ministep"><b>Step 2</b> · 3/4 = 9/12 → region: left fraction</div>
+       <div class="ministep"><b>Step 3</b> · 2/3 = 8/12, so 9/12 &gt; 8/12 → region: right fraction</div></div>`},
+    {t:"Narrate + highlight, step by step", d:"The voice explains each step while the matching part of the worksheet glows on screen. Eyes always know where to look.",
+     stamp:["ai","AI explains here — never in Exam-Prep"],
+     scene:()=>P(`<div class="wline"><span class="w">Compare:</span> <span class="w pick">3/4</span> <span class="w">and</span> <span class="w">2/3</span></div>
+       <div class="ministeps" style="margin-top:10px">
+         <div class="ministep hlited"><b>Step 2</b> · 3/4 becomes 9/12</div></div>
+       <div class="mono" style="margin-top:10px">🔊 \u201cnow look at the left fraction…\u201d</div>`)},
+    {t:"Follow up freely", d:"It's a conversation. The student can push on anything they didn't get.",
+     stamp:null,
+     scene:()=>P(`<div class="bubble">\u201cwhat about 5/6 then?\u201d</div>
+       <div style="margin-top:10px" class="mono">tutoring continues — same frame, new question</div>`)}
+  ]
+},
+{
+  name:"Stuck-Word Autopsy",
+  tag:"A stuck word is the best teaching moment of the day",
+  steps:[
+    {t:"Tap the stuck word", d:"The student is reading on their own. Stuck on one word? Tap it. The app says that word — and nothing else.",
+     stamp:["det","Reads one word, not the page"],
+     scene:()=>P(`<div class="wline"><span class="w">The</span> <span class="w">battery</span> <span class="w">stores</span> <span class="w">electric</span> <span class="w pick">charge</span></div>
+       <div class="mono" style="margin-top:12px">🔊 \u201ccharge\u201d … then silence</div>
+       <div class="mono" style="margin-top:6px">the student keeps reading — support stays minimal</div>`)},
+    {t:"Tap again: sound it out", d:"The word splits into letter-sound chunks. Each chunk lights up as its real recorded sound plays — not TTS, which can't say clean single sounds.",
+     stamp:["det","Recorded phoneme audio · zero AI"],
+     scene:()=>`<div class="center"><div class="chunks" id="chunks"><span class="chunk">ch</span><span class="chunk">ar</span><span class="chunk">ge</span></div>
+       <div class="phchip" id="phchip">&nbsp;</div>
+       <p class="note" style="margin-top:8px">then the whole word blends back together: \u201ccharge\u201d</p></div>`},
+    {t:"Now trace it on the paper", d:"The camera watches the student's finger trace the real word, left to right, while each sound plays under their fingertip. See it, hear it, feel it — at once.",
+     stamp:["det","Camera checks left → right"],
+     scene:()=>`<div class="center"><div class="trace"><span class="fing">👉</span><div class="word">charge</div></div>
+       <div class="mono" style="margin-top:6px">— — — →</div>
+       <p class="note" style="margin-top:10px">multisensory phonics on real homework, no extra hardware</p></div>`},
+    {t:"Chime — unlocked", d:"The word unlocks with a chime. The pattern behind it (\u201car\u201d) goes into the log, so parents and future sessions know exactly which letter-sounds need work.",
+     stamp:["ok","Pattern logged: \u201car\u201d"],
+     scene:()=>`<div class="center"><div class="ring">✓</div>
+       <div style="font-family:'Bricolage Grotesque';font-weight:800;font-size:20px">charge — unlocked</div>
+       <p class="note" style="margin-top:8px">tomorrow the system already knows \u201car\u201d words need practice</p></div>`}
+  ]
+}
+];
+
+/* ---------------- state & render ---------------- */
+let fi = 0, si = 0, playing = false, timer = null, karaTimer = null, chunkTimer = null;
+const $ = id => document.getElementById(id);
+const reduced = window.matchMedia('(prefers-reduced-motion: reduce)').matches;
+
+function renderTabs(){
+  $('tabs').innerHTML = FEATURES.map((f,i)=>
+    `<button class="tab ${i===fi?'on':''}" role="tab" aria-selected="${i===fi}" data-f="${i}"><span class="n">0${i+1}</span>${f.name}</button>`).join('');
+  document.querySelectorAll('.tab').forEach(b=>b.onclick=()=>{stop();fi=+b.dataset.f;si=0;render();});
+}
+
+function renderSteps(){
+  const f = FEATURES[fi];
+  $('modeTitle').textContent = f.name;
+  $('modeTag').textContent = f.tag;
+  $('steps').innerHTML = f.steps.map((s,i)=>
+    `<button class="step ${i===si?'on':''}" data-s="${i}" aria-current="${i===si}">
+      <span class="qn">Q${i+1}</span>
+      <span><span class="st">${s.t}</span><span class="sd" style="display:block">${s.d}</span>
+      <span class="prog"><i id="prog${i}"></i></span></span>
+    </button>`).join('');
+  document.querySelectorAll('.step').forEach(b=>b.onclick=()=>{stop();si=+b.dataset.s;render();});
+}
+
+function renderStage(){
+  const s = FEATURES[fi].steps[si];
+  $('stageTitle').textContent = s.t;
+  $('stageStamp').innerHTML = s.stamp ? `<span class="stamp ${s.stamp[0]}">${s.stamp[1]}</span>` : '';
+  $('scene').innerHTML = s.scene();
+  $('scene').style.animation='none'; void $('scene').offsetWidth; $('scene').style.animation='';
+  runSceneExtras();
+}
+
+function render(){renderTabs();renderSteps();renderStage();}
+
+/* per-scene animations */
+function runSceneExtras(){
+  clearInterval(karaTimer); clearInterval(chunkTimer);
+  const kl = $('karaline');
+  if(kl && !reduced){
+    const ws = kl.querySelectorAll('.w'); let k=0;
+    karaTimer = setInterval(()=>{ws.forEach(w=>w.classList.remove('lit'));ws[k%ws.length].classList.add('lit');k++;},420);
+  }
+  const ch = $('chunks');
+  if(ch && !reduced){
+    const cs = ch.querySelectorAll('.chunk'); const ph=['/ch/','/ar/','/j/']; let k=0;
+    chunkTimer = setInterval(()=>{cs.forEach(c=>c.classList.remove('lit'));cs[k%3].classList.add('lit');$('phchip').textContent=ph[k%3];k++;},650);
+  }
+}
+
+/* hero karaoke */
+(function(){
+  const words = "Find the perimeter of the rectangle below.".split(" ");
+  $('karaoke').innerHTML = words.map(w=>`<span class="kw">${w}</span>`).join(" ");
+  if(reduced) return;
+  const ks = document.querySelectorAll('#karaoke .kw'); let k=0;
+  setInterval(()=>{ks.forEach(w=>w.classList.remove('lit'));ks[k%ks.length].classList.add('lit');k++;},480);
+})();
+
+/* autoplay */
+const DUR = 4200;
+function play(){
+  if(reduced){advance();return;}
+  playing = true; $('playBtn').textContent = "⏸ Pause";
+  tick();
+}
+function tick(){
+  const bar = $('prog'+si);
+  if(bar){bar.style.transition='none';bar.style.width='0';void bar.offsetWidth;
+    bar.style.transition=`width ${DUR}ms linear`;bar.style.width='100%';}
+  timer = setTimeout(()=>{advance();if(playing)tick();},DUR);
+}
+function advance(){
+  const n = FEATURES[fi].steps.length;
+  if(si < n-1){si++;}else{si=0;}
+  renderSteps();renderStage();
+}
+function stop(){
+  playing=false;clearTimeout(timer);$('playBtn').textContent="▶ Play walkthrough";
+  const bar=$('prog'+si); if(bar){bar.style.transition='none';bar.style.width='0';}
+}
+$('playBtn').onclick=()=>{playing?stop():play();};
+
+document.addEventListener('keydown',e=>{
+  if(e.key==='ArrowRight'){stop();si=Math.min(si+1,FEATURES[fi].steps.length-1);renderSteps();renderStage();}
+  if(e.key==='ArrowLeft'){stop();si=Math.max(si-1,0);renderSteps();renderStage();}
+});
+
+render();
+</script>
+</body>
+</html>
