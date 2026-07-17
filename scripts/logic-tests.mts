@@ -5,7 +5,13 @@
 
 import assert from "node:assert/strict";
 import { subBoxFor, type OcrBox } from "../components/KaraokeHighlight";
-import { nearestBlock, traceSatisfied, boxCenter } from "../lib/hand-tracker";
+import {
+  nearestBlock,
+  traceSatisfied,
+  boxCenter,
+  selectWordAt,
+  DwellTracker,
+} from "../lib/hand-tracker";
 import { chunksFor, chunkPattern, normalizeWord } from "../lib/graphemes";
 import { computeStats } from "../lib/analytics";
 import { parseSteps } from "../lib/tutor-model";
@@ -40,6 +46,48 @@ const box = (l: number, t: number, r: number, b: number): [number, number][] => 
   assert.equal(nearestBlock({ x: 5, y: 15 }, [bottom, top]), top);
   assert.equal(nearestBlock({ x: 5, y: 15 }, []), null);
   assert.deepEqual(boxCenter(box(0, 0, 10, 20)), { x: 5, y: 10 });
+}
+
+// ── selectWordAt: containment first, rect-distance fallback, reject far ──────
+{
+  // Two stacked lines, 20px tall, 400px wide (line-level OCR shapes).
+  const line1: OcrBox = { text: "line one", box: box(50, 100, 450, 120) };
+  const line2: OcrBox = { text: "line two", box: box(50, 140, 450, 160) };
+  const lines = [line1, line2];
+
+  // Inside a box → that box, even when the other box's CENTER is closer.
+  assert.equal(selectWordAt({ x: 60, y: 110 }, lines), line1);
+  assert.equal(selectWordAt({ x: 60, y: 150 }, lines), line2);
+  // Between the lines, nearer line2's edge → line2.
+  assert.equal(selectWordAt({ x: 200, y: 136 }, lines), line2);
+  // Far below everything (> 3 line heights = 60px from line2) → null.
+  assert.equal(selectWordAt({ x: 200, y: 260 }, lines), null);
+  assert.equal(selectWordAt({ x: 200, y: 110 }, []), null);
+}
+
+// ── DwellTracker: dwell fires once, refractory blocks, rearm re-enables ──────
+{
+  const d = new DwellTracker(600, 200, 400);
+  assert.equal(d.update("w1", 0).fired, null); // just arrived
+  assert.equal(d.update("w1", 300).fired, null); // progress ~0.5
+  assert.equal(d.update("w1", 650).fired, "w1"); // dwell reached → fires
+  assert.equal(d.update("w1", 1300).fired, null); // refractory: no refire
+  // Brief dropout within grace keeps the candidate alive.
+  const d2 = new DwellTracker(600, 200, 400);
+  d2.update("w1", 0);
+  assert.equal(d2.update(null, 150).hover, "w1"); // grace bridges the gap
+  assert.equal(d2.update("w1", 650).fired, "w1");
+  // rearm(): the same word may fire again after another full dwell.
+  d2.rearm("w1");
+  assert.equal(d2.update("w1", 700).fired, null); // dwell restarts
+  // Away for >= releaseMs also rearms.
+  const d3 = new DwellTracker(600, 200, 400);
+  d3.update("w1", 0);
+  d3.update("w1", 650); // fired
+  d3.update(null, 900); // away (past grace)
+  d3.update(null, 1400); // away >= 400ms → rearmed
+  d3.update("w1", 1500);
+  assert.equal(d3.update("w1", 2200).fired, "w1"); // fires again
 }
 
 // ── traceSatisfied: inside padded box + net left-to-right > 60% width ────────

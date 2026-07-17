@@ -10,10 +10,12 @@
  * pixel space as the OCR boxes.
  *
  * Point-to-read pipeline (2026-07-17 rework — replaces tap selection):
- *   startFingerLoop  → smoothed fingertip samples at ~9 fps (VIDEO mode)
- *   selectWordAt     → containment-first selection with upward fingertip
- *                      bias and a max-distance reject (better precision than
- *                      raw nearest-center on long line boxes)
+ *   startFingerLoop  → smoothed pointed-spot samples at ~11 fps (VIDEO mode;
+ *                      tip extended along the finger direction, low-score
+ *                      hands rejected)
+ *   selectWordAt     → containment-first selection with a max-distance
+ *                      reject (better precision than raw nearest-center on
+ *                      long line boxes)
  *   DwellTracker     → hold-to-trigger with dropout grace + refractory
  *
  * `nearestBlock` (nearest center, ties → topmost) is kept as the simple
@@ -81,6 +83,42 @@ export async function detectFingertipVideo(
   return { x: tip.x, y: tip.y };
 }
 
+/**
+ * How far beyond the nail (as a fraction of the DIP→TIP segment) the pointed
+ * spot lies. The tip landmark sits on the nail; the word under the finger
+ * pad is roughly half a distal phalanx further along the finger's own
+ * direction — and unlike a fixed "upward" bias, this stays correct at any
+ * camera angle (phone looking down, laptop webcam at an oblique view, …).
+ */
+const POINTER_EXTEND = 0.5;
+/** Hands below this handedness score are treated as not present (jitter guard). */
+const MIN_HAND_SCORE = 0.4;
+
+/**
+ * Pointed-spot sample for the point-to-read loop: landmark 8 extended along
+ * the finger direction (7→8), with low-confidence detections rejected.
+ * This exact point is BOTH displayed and used for selection — never let the
+ * two diverge, or the UI reads a different line than the dot shows.
+ */
+export async function detectPointerVideo(
+  canvas: HTMLCanvasElement,
+  timestampMs: number,
+): Promise<Point | null> {
+  const lm = await ensureMode("VIDEO");
+  const result = lm.detectForVideo(canvas, timestampMs);
+  const hand = result.landmarks[0];
+  if (!hand) return null;
+  const score = result.handedness[0]?.[0]?.score ?? 1;
+  if (score < MIN_HAND_SCORE) return null;
+  const tip = hand[8];
+  const dip = hand[7];
+  if (!tip || !dip) return null;
+  return {
+    x: tip.x + (tip.x - dip.x) * POINTER_EXTEND,
+    y: tip.y + (tip.y - dip.y) * POINTER_EXTEND,
+  };
+}
+
 export async function endTraceMode(): Promise<void> {
   if (landmarker) await ensureMode("IMAGE");
 }
@@ -112,16 +150,17 @@ export class PointSmoother {
 }
 
 /**
- * Continuous fingertip sampling loop (~9 fps). Emits smoothed NORMALIZED
- * points (null when no hand). Returns a stop function. Only one loop should
- * run at a time (detectForVideo timestamps must increase monotonically).
+ * Continuous pointer sampling loop (~11 fps). Emits smoothed NORMALIZED
+ * pointed-spot samples (detectPointerVideo; null when no hand). Returns a
+ * stop function. Only one loop should run at a time (detectForVideo
+ * timestamps must increase monotonically).
  */
 export function startFingerLoop(opts: {
   getCanvas: () => HTMLCanvasElement | null;
   onSample: (tip: Point | null) => void;
   intervalMs?: number;
 }): () => void {
-  const interval = opts.intervalMs ?? 110;
+  const interval = opts.intervalMs ?? 90;
   const smoother = new PointSmoother();
   let running = true;
   let misses = 0;
@@ -132,7 +171,7 @@ export function startFingerLoop(opts: {
     const canvas = opts.getCanvas();
     if (canvas && canvas.width > 0) {
       try {
-        const raw = await detectFingertipVideo(canvas, performance.now());
+        const raw = await detectPointerVideo(canvas, performance.now());
         if (!running) return;
         if (raw) {
           misses = 0;
@@ -207,14 +246,15 @@ function rectOf(box: [number, number][]): Rect {
 /**
  * Precision selector for point-to-read (pixel space, same as OCR boxes).
  *
- * Improvements over nearest-center (which misfires on long line boxes and
- * finger occlusion):
- *  - upward bias: the fingertip covers the word it touches, so the intended
- *    target sits slightly ABOVE the detected tip (~0.45 line heights);
- *  - containment first: a box the (biased) point falls inside always wins;
+ * The input point is the POINTED SPOT from detectPointerVideo (tip extended
+ * along the finger direction) — no additional bias is applied here, so the
+ * point the user sees on screen is exactly the point that selects.
+ *
+ * Improvements over nearest-center (which misfires on long line boxes):
+ *  - containment first: a box the point falls inside always wins;
  *  - otherwise clamped point-to-rect distance with vertical error weighted
  *    heavier (lines are wide, so x-distance is a weak signal);
- *  - reject when nothing is within ~2.5 line heights (pointing at margin).
+ *  - reject when nothing is within ~3 line heights (pointing at margin).
  * Ties → topmost, as before (§7 rule 5).
  */
 export function selectWordAt<T extends OcrBox>(point: Point, blocks: T[]): T | null {
@@ -223,7 +263,7 @@ export function selectWordAt<T extends OcrBox>(point: Point, blocks: T[]): T | n
   const heights = rects.map((r) => r.bottom - r.top).sort((a, b) => a - b);
   const medianH = Math.max(1, heights[Math.floor(heights.length / 2)]);
 
-  const p = { x: point.x, y: point.y - 0.45 * medianH };
+  const p = point;
   const yWeight = 1.8;
 
   // Pass 1 — containment (small pad so edges aren't knife-thin targets).
@@ -259,7 +299,7 @@ export function selectWordAt<T extends OcrBox>(point: Point, blocks: T[]): T | n
       bestY = cy;
     }
   });
-  return bestDist <= 2.5 * medianH ? best : null;
+  return bestDist <= 3 * medianH ? best : null;
 }
 
 /**
@@ -288,12 +328,16 @@ export class DwellTracker {
     this.firedAwaySince = null;
   }
 
-  /** Allow the given key (or any, when omitted) to fire again immediately. */
+  /**
+   * Allow the given key (or any, when omitted) to fire again after a fresh
+   * full dwell. Clears the candidate so the dwell clock restarts on the next
+   * observation — no wall-clock reads, so it works on any caller timeline.
+   */
   rearm(key?: string): void {
     if (key === undefined || this.firedKey === key) {
       this.firedKey = null;
       this.firedAwaySince = null;
-      this.candidateSince = performance.now();
+      this.candidate = null;
     }
   }
 

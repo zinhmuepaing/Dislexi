@@ -31,10 +31,11 @@ clip over the front camera, looking down at a worksheet on the desk.
 4. **Phonemes never come from TTS.** Static bank in `public/phonemes/` only
    (TTS hallucinates a schwa on isolated plosives — pedagogically harmful).
 5. **Fingertip = MediaPipe landmark 8** in canvas coords; selection (amended
-   2026-07-17, tap-to-read removed) = smoothed fingertip + upward bias,
-   containment-first then clamped rect distance (y-weighted), ties → topmost,
-   triggered by ~0.7 s dwell (`selectWordAt`/`DwellTracker` in
-   `lib/hand-tracker.ts`).
+   2026-07-17, tap-to-read removed) = pointed spot (tip extended along the
+   finger's 7→8 direction, smoothed), containment-first then clamped rect
+   distance (y-weighted), ties → topmost, triggered by ~0.7 s dwell. The
+   displayed dot and the selecting point must be the same point
+   (`detectPointerVideo`/`selectWordAt`/`DwellTracker` in `lib/hand-tracker.ts`).
 6. **Mode transitions announced aloud** (ADHD split-attention mitigation).
 7. **Grapheme sub-boxes** = proportional char-count split of the word's box
    (`subBoxFor` in `components/KaraokeHighlight.tsx`).
