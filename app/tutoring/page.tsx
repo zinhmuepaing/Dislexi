@@ -156,16 +156,26 @@ function AidsOverlay({ region, aids }: { region: TutorRegion | null; aids: Tutor
           return null;
         })}
       </svg>
-      {/* "write" labels as HTML so text isn't stretched by the SVG scaling. */}
-      {writes.map((aid, i) => (
-        <span
-          key={`w${i}`}
-          className="fadein absolute -translate-y-full whitespace-nowrap rounded bg-white/85 px-1 font-display text-[3.2vw] font-extrabold leading-tight text-[var(--point)] shadow-sm sm:text-sm"
-          style={{ left: `${(aid.region.x + aid.region.w) * 100}%`, top: `${aid.region.y * 100}%` }}
-        >
-          {aid.text}
-        </span>
-      ))}
+      {/* "write" labels as HTML so text isn't stretched by the SVG scaling.
+          Centered over the word and clamped inside the frame so the working
+          never gets truncated at an edge (item 1). */}
+      {writes.map((aid, i) => {
+        const cx = Math.min(0.9, Math.max(0.1, aid.region.x + aid.region.w / 2));
+        const above = aid.region.y > 0.12; // room above? place above, else below
+        return (
+          <span
+            key={`w${i}`}
+            className="fadein absolute max-w-[38%] -translate-x-1/2 rounded bg-white/90 px-1 text-center font-display text-[2.9vw] font-extrabold leading-tight text-[var(--point)] shadow-sm sm:text-[13px]"
+            style={{
+              left: `${cx * 100}%`,
+              top: above ? undefined : `${(aid.region.y + aid.region.h) * 100 + 1}%`,
+              bottom: above ? `${(1 - aid.region.y) * 100 + 1}%` : undefined,
+            }}
+          >
+            {aid.text}
+          </span>
+        );
+      })}
     </>
   );
 }

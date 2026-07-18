@@ -14,7 +14,7 @@ import {
 } from "../lib/hand-tracker";
 import { chunksFor, chunkPattern, normalizeWord } from "../lib/graphemes";
 import { computeStats } from "../lib/analytics";
-import { parseSteps } from "../lib/tutor-model";
+import { parseSteps, stripMarkdown } from "../lib/tutor-model";
 import { buildSentences, buildParagraphs, blockToSentenceMap, localWordAt } from "../lib/sentences";
 import { fastParseCommand } from "../lib/voice-commands";
 import { syllablesOf, coachingLines } from "../lib/syllables";
@@ -412,6 +412,19 @@ const box = (l: number, t: number, r: number, b: number): [number, number][] => 
     "A, wards, Awards.",
   ]);
   assert.deepEqual(coachingLines("cat"), ["This word is cat. cat, cat.", "cat, cat."]);
+}
+
+// ── stripMarkdown: Telegram summaries never show raw markdown (item 4) ───────
+{
+  assert.equal(stripMarkdown("## Session Summary"), "Session Summary");
+  assert.equal(stripMarkdown("**Overview**"), "Overview");
+  assert.equal(stripMarkdown("He read *well* today"), "He read well today");
+  assert.equal(stripMarkdown("- first\n- second"), "• first\n• second");
+  assert.equal(stripMarkdown("use `code` here"), "use code here");
+  // A realistic messy blob → no **, ##, or backticks survive.
+  const cleaned = stripMarkdown("## Summary\n\n**Overview**\n\n230 events with `89` reads.");
+  assert.ok(!/[*#`]/.test(cleaned));
+  assert.ok(cleaned.includes("Overview") && cleaned.includes("230 events"));
 }
 
 console.log("logic-tests: all assertions passed");

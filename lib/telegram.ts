@@ -29,6 +29,26 @@ export function defaultChatId(): string {
   return id;
 }
 
+let cachedUsername: string | null = null;
+
+/**
+ * The bot's own @username (lowercased, no @), cached. Needed to detect when
+ * the bot is mentioned in a group. Uses TELEGRAM_BOT_USERNAME if set, else
+ * getMe. Group updates only reach us (privacy mode ON) when the bot is
+ * @mentioned or a command targets it, so this is the group-trigger key.
+ */
+export async function botUsername(): Promise<string> {
+  if (cachedUsername) return cachedUsername;
+  const fromEnv = process.env.TELEGRAM_BOT_USERNAME?.replace(/^@/, "").toLowerCase();
+  if (fromEnv) {
+    cachedUsername = fromEnv;
+    return cachedUsername;
+  }
+  const me = await call<{ username?: string }>("getMe", {});
+  cachedUsername = (me.username ?? "").toLowerCase();
+  return cachedUsername;
+}
+
 export interface InlineKeyboardButton {
   text: string;
   callback_data: string;

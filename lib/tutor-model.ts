@@ -422,17 +422,91 @@ export async function summarizeStudyPatterns(aggregateText: string): Promise<str
     model: TUTOR_MODEL,
     max_tokens: 1024,
     system:
-      "You summarize a child's reading-practice session statistics for a parent. " +
-      "Output study-pattern insights and practical recommendations ONLY — trends in requests, " +
-      "re-reads, pacing, and frequently stuck words/grapheme patterns. " +
+      "You summarize a child's reading-practice session statistics for a parent, to be sent as a " +
+      "Telegram chat message. Output study-pattern insights and practical recommendations ONLY — " +
+      "trends in requests, re-reads, pacing, and frequently stuck words/grapheme patterns. " +
       "NEVER make emotional or clinical claims, never diagnose, never speculate about the child's " +
-      "feelings or conditions. Plain text, short paragraphs, parent-friendly language.",
+      "feelings or conditions.\n\n" +
+      "FORMATTING (Telegram plain text — no Markdown):\n" +
+      "- Do NOT use Markdown: no **, no ##, no backticks, no bullet dashes at line start.\n" +
+      "- Lead each short section with a relevant emoji and a Title Case label on its own line " +
+      "(e.g. '📖 Reading Overview'), then 1–3 short sentences under it.\n" +
+      "- Keep it warm, concise, and skimmable — 3 to 5 sections, a blank line between them.\n" +
+      "- End with one '💡 Try This' tip.",
     messages: [{ role: "user", content: aggregateText }],
   });
 
-  return response.content
-    .filter((b): b is Anthropic.TextBlock => b.type === "text")
-    .map((b) => b.text)
-    .join("")
+  return stripMarkdown(
+    response.content
+      .filter((b): b is Anthropic.TextBlock => b.type === "text")
+      .map((b) => b.text)
+      .join("")
+      .trim(),
+  );
+}
+
+/**
+ * Safety net for Telegram plain-text messages: strip Markdown syntax the
+ * model might still emit so parents never see raw ** or ## (item 4).
+ */
+export function stripMarkdown(text: string): string {
+  return text
+    .replace(/^#{1,6}\s+/gm, "") // ## headers
+    .replace(/\*\*(.+?)\*\*/g, "$1") // **bold**
+    .replace(/(^|\s)\*(?!\s)(.+?)(?<!\s)\*/g, "$1$2") // *italic*
+    .replace(/(^|\s)_(?!\s)(.+?)(?<!\s)_/g, "$1$2") // _italic_
+    .replace(/`([^`]+)`/g, "$1") // `code`
+    .replace(/^\s*[-*]\s+/gm, "• ") // list dashes → bullet
+    .replace(/^\s*>\s?/gm, "") // blockquotes
+    .replace(/\n{3,}/g, "\n\n") // collapse blank runs
     .trim();
+}
+
+export type GroupIntent =
+  | { action: "review"; days: number }
+  | { action: "report" }
+  | { action: "help" }
+  | { action: "other" };
+
+/**
+ * Classify a free-text group request aimed at the bot (item 5): decide
+ * whether it's asking for a reading review (and over how many days), the
+ * latest report, help, or something off-topic. Text-only; reuses the
+ * command model. Falls back to "other" (a polite refusal) on any failure.
+ */
+export async function classifyGroupRequest(text: string): Promise<GroupIntent> {
+  try {
+    const response = await client().messages.create({
+      model: COMMAND_MODEL,
+      max_tokens: 60,
+      system:
+        "You route a message sent to a reading-practice assistant bot in a group chat. The bot " +
+        "reports a child's reading-practice patterns (reads, re-reads, stuck words, pacing) over a " +
+        "time window. Classify the user's request. Respond STRICT JSON only:\n" +
+        '{"action":"review","days":7} for any ask about how the child did / recent readings / ' +
+        "insights over a period (map 'today'→1, 'this week'/'past week'→7, 'this month'→30; default " +
+        "7 if unspecified);\n" +
+        '{"action":"report"} for the latest/most recent single session;\n' +
+        '{"action":"help"} for what the bot can do;\n' +
+        '{"action":"other"} for anything unrelated to the child\'s reading practice.',
+      messages: [{ role: "user", content: text.slice(0, 300) }],
+    });
+    const raw = response.content
+      .filter((b): b is Anthropic.TextBlock => b.type === "text")
+      .map((b) => b.text)
+      .join("");
+    const parsed = JSON.parse(raw.slice(raw.indexOf("{"), raw.lastIndexOf("}") + 1)) as {
+      action?: string;
+      days?: unknown;
+    };
+    if (parsed.action === "review") {
+      const days = Number(parsed.days);
+      return { action: "review", days: Number.isFinite(days) && days > 0 ? Math.min(365, days) : 7 };
+    }
+    if (parsed.action === "report") return { action: "report" };
+    if (parsed.action === "help") return { action: "help" };
+    return { action: "other" };
+  } catch {
+    return { action: "other" };
+  }
 }
