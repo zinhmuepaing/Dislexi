@@ -16,6 +16,7 @@ import { chunksFor, chunkPattern, normalizeWord } from "../lib/graphemes";
 import { computeStats } from "../lib/analytics";
 import { parseSteps } from "../lib/tutor-model";
 import { buildSentences, blockToSentenceMap, localWordAt } from "../lib/sentences";
+import { fastParseCommand } from "../lib/voice-commands";
 
 const box = (l: number, t: number, r: number, b: number): [number, number][] => [
   [l, t],
@@ -245,6 +246,25 @@ const box = (l: number, t: number, r: number, b: number): [number, number][] => 
   assert.equal(emptyMap[0], 0);
   assert.equal(emptyMap[1], undefined); // dropped empty line maps to nothing
   assert.equal(emptyMap[2], 1);
+}
+
+// ── fastParseCommand: keyword fast-path before any LLM (amended rule 3) ──────
+{
+  assert.deepEqual(fastParseCommand("read this"), { intent: "read", scope: undefined });
+  assert.deepEqual(fastParseCommand("please READ that bit"), { intent: "read", scope: undefined });
+  assert.deepEqual(fastParseCommand("read this word"), { intent: "read", scope: "word" });
+  assert.deepEqual(fastParseCommand("can you read the sentence"), { intent: "read", scope: "sentence" });
+  assert.deepEqual(fastParseCommand("read the whole paragraph"), { intent: "read", scope: "paragraph" });
+  assert.deepEqual(fastParseCommand("switch to word mode"), { intent: "set_scope", scope: "word" });
+  assert.deepEqual(fastParseCommand("again"), { intent: "repeat" });
+  assert.deepEqual(fastParseCommand("one more time please"), { intent: "repeat" });
+  assert.deepEqual(fastParseCommand("stop"), { intent: "stop" });
+  assert.deepEqual(fastParseCommand("scan again"), { intent: "rescan" });
+  assert.deepEqual(fastParseCommand("I'm stuck on this word"), { intent: "stuck_word" });
+  assert.deepEqual(fastParseCommand("what is this word"), { intent: "stuck_word" });
+  // Not classifiable → null → the caller may consult the LLM.
+  assert.equal(fastParseCommand("um so like the thing over there"), null);
+  assert.equal(fastParseCommand(""), null);
 }
 
 console.log("logic-tests: all assertions passed");

@@ -31,6 +31,11 @@ const SYNTH_CACHE_MAX = 24;
 
 let cachedToken: { token: string; region: string; fetchedAt: number } | null = null;
 
+/** Shared Azure Speech token (TTS here + STT in lib/stt.ts use one cache). */
+export async function getSpeechToken(): Promise<{ token: string; region: string }> {
+  return getToken();
+}
+
 async function getToken(): Promise<{ token: string; region: string }> {
   if (cachedToken && Date.now() - cachedToken.fetchedAt < TOKEN_TTL_MS) return cachedToken;
   const res = await fetch("/api/azure-token");

@@ -20,8 +20,11 @@
  */
 
 import Anthropic from "@anthropic-ai/sdk";
+import type { VoiceIntent } from "@/lib/voice-commands";
 
 const TUTOR_MODEL = "claude-sonnet-4-6"; // vision-capable — a hard requirement for this route regardless of vendor
+/** Intent parsing only (amended §7 rule 3) — small + fast; swap target: MAAS text model. */
+const COMMAND_MODEL = "claude-haiku-4-5";
 
 let _client: Anthropic | null = null;
 function client(): Anthropic {
@@ -161,6 +164,45 @@ export async function runTutor(
     .map((b) => b.text)
     .join("");
   return parseSteps(fullText);
+}
+
+const VOICE_INTENTS = new Set(["read", "set_scope", "stuck_word", "repeat", "stop", "rescan", "none"]);
+const VOICE_SCOPES = new Set(["word", "sentence", "paragraph"]);
+
+/**
+ * Voice-command INTENT parsing (amended §7 rule 3): the model classifies a
+ * child's spoken request — it never sees, generates, or rewrites the text
+ * that gets read aloud. Called only when the client keyword fast-path
+ * (lib/voice-commands.ts) could not classify the utterance.
+ */
+export async function parseVoiceCommand(utterance: string): Promise<VoiceIntent> {
+  const response = await client().messages.create({
+    model: COMMAND_MODEL,
+    max_tokens: 60,
+    system:
+      "Classify a primary-school student's spoken request in a point-and-read app. " +
+      "The student points a finger at worksheet text; the app can read what is pointed at, " +
+      "change the reading scope, help with a stuck word, repeat, stop speaking, or rescan the page. " +
+      "Utterances contain fillers and varied phrasing. Respond with STRICT JSON only: " +
+      '{"intent":"read|set_scope|stuck_word|repeat|stop|rescan|none","scope":"word|sentence|paragraph"} ' +
+      '— "scope" only when the student names a unit. Unclear or off-topic speech → {"intent":"none"}.',
+    messages: [{ role: "user", content: utterance.slice(0, 300) }],
+  });
+
+  const raw = response.content
+    .filter((b): b is Anthropic.TextBlock => b.type === "text")
+    .map((b) => b.text)
+    .join("");
+  try {
+    const start = raw.indexOf("{");
+    const end = raw.lastIndexOf("}");
+    const parsed = JSON.parse(raw.slice(start, end + 1)) as { intent?: string; scope?: string };
+    const intent = VOICE_INTENTS.has(parsed.intent ?? "") ? (parsed.intent as VoiceIntent["intent"]) : "none";
+    const scope = VOICE_SCOPES.has(parsed.scope ?? "") ? (parsed.scope as VoiceIntent["scope"]) : undefined;
+    return scope ? { intent, scope } : { intent };
+  } catch {
+    return { intent: "none" };
+  }
 }
 
 /**
