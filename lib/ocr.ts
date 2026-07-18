@@ -18,11 +18,24 @@
  * Free tier (F0): 5,000 transactions/month, 20 requests/minute.
  */
 
+export interface OcrWord {
+  text: string;
+  /** Four corner points, clockwise from top-left, in pixel coords of the submitted image. */
+  box: [number, number][];
+}
+
 export interface OcrBlock {
   text: string;
   confidence: number;
   /** Four corner points, clockwise from top-left, in pixel coords of the submitted image. */
   box: [number, number][];
+  /**
+   * Word-level boxes for this line, when the vendor provides them (Azure
+   * does; Huawei does not). Consumers use these for accurate word selection /
+   * highlighting and fall back to proportional char-count splits when absent
+   * (§5.1 gotcha 2, §7 rule 7). Additive to the contract — safe to ignore.
+   */
+  words?: OcrWord[];
 }
 
 interface AzureWord {
@@ -85,6 +98,10 @@ export async function recognizeText(imageBase64: string): Promise<{ blocks: OcrB
         text: line.text,
         confidence: Number(confidence.toFixed(4)),
         box: (line.boundingPolygon ?? []).map((p) => [p.x, p.y] as [number, number]),
+        words: words.map((w) => ({
+          text: w.text,
+          box: (w.boundingPolygon ?? []).map((p) => [p.x, p.y] as [number, number]),
+        })),
       });
     }
   }

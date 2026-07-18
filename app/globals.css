@@ -15,6 +15,7 @@
   --hl: #ffd34d;
   --hl-strong: #ffb020;
   --pen: #2b6cb0;
+  --point: #ec4d25; /* camera-overlay pointing / selection accent (2026-07-19) */
   --ai: #7c5cbf;
   --ok: #2f9e63;
   --card: #ffffff;
@@ -32,6 +33,7 @@
   --color-hl: #ffd34d;
   --color-hl-strong: #ffb020;
   --color-pen: #2b6cb0;
+  --color-point: #ec4d25;
   --color-ai: #7c5cbf;
   --color-ok: #2f9e63;
   --font-sans: var(--font-plex-sans);

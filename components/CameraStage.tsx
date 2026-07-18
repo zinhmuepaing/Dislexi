@@ -80,10 +80,15 @@ interface CameraStageProps {
   onReady?: () => void;
   /** Fires when the camera or mirror setting changes (overlays/scans stale). */
   onSourceChange?: () => void;
+  /** Tailwind max-height class for the canvas (viewport-capped). */
+  maxHeightClass?: string;
 }
 
 export const CameraStage = forwardRef<CameraStageHandle, CameraStageProps>(
-  function CameraStage({ children, onError, onReady, onSourceChange }, ref) {
+  function CameraStage(
+    { children, onError, onReady, onSourceChange, maxHeightClass = "max-h-[54dvh]" },
+    ref,
+  ) {
     const videoRef = useRef<HTMLVideoElement>(null);
     const canvasRef = useRef<HTMLCanvasElement>(null);
     const rafRef = useRef<number>(0);
@@ -226,7 +231,7 @@ export const CameraStage = forwardRef<CameraStageHandle, CameraStageProps>(
           {/* Hidden raw video — never shown or processed directly. */}
           <video ref={videoRef} playsInline muted className="hidden" />
           {/* The canvas everything sees (step 0 applied when mirror is on). */}
-          <canvas ref={canvasRef} className="block h-auto max-h-[42dvh] w-auto max-w-full" />
+          <canvas ref={canvasRef} className={`block h-auto w-auto max-w-full ${maxHeightClass}`} />
           {/* Overlay layer (highlights, regions) in canvas-frame space. */}
           <div className="pointer-events-none absolute inset-0">{children}</div>
 

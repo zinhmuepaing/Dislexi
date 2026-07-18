@@ -3,17 +3,16 @@
 /**
  * Stuck-Word Autopsy — syllable coaching (REWORK R6, amended §7 rules 3–4).
  *
- * Practice flow: point at a word (dwell) or point + say "I'm stuck on this
- * word" → the app coaches with a FIXED template, spoken twice:
- * "This word is Awards. A, wards, Awards." — the word is verbatim OCR text,
- * syllables are deterministic letter-substrings (lib/syllables.ts — data
- * tables + vowel rules, NO model). TTS speaks words and syllables only;
- * ISOLATED PHONEMES still come exclusively from the static bank, available
- * via the "sound it out" voice command (GraphemeSweep + /public/phonemes).
+ * Coaching: point at a word + say "I'm stuck" (or tap the button) → the app
+ * says "This word is Awards. A, wards, Awards." (word verbatim from OCR,
+ * syllables deterministic from lib/syllables.ts — NO model in spoken
+ * content). "sound it out" plays the static phoneme bank sweep (§7 rule 4).
+ * Practiced words feed the end-of-session quiz (R7).
  *
- * The LLM appears ONLY as voice-command intent parser (amended rule 3).
- * Every practiced word is collected for the end-of-session quiz (R7).
- * Trace-to-unlock retired from the practice loop (2026-07-18).
+ * Pointing uses the vision model (2026-07-19, /api/point) — robust to the
+ * back-of-hand view the mirror-clip camera sees, unlike MediaPipe. The model
+ * locates the finger; the OCR word there is what we coach/quiz. lib/
+ * hand-tracker.ts is kept for revert (selectWordAt is reused).
  */
 
 import { useEffect, useRef, useState } from "react";
@@ -23,7 +22,7 @@ import { CameraStage, CameraStageHandle, CapturedFrame } from "@/components/Came
 import { GraphemeSweep } from "@/components/GraphemeSweep";
 import { OcrBox, subBoxFor } from "@/components/KaraokeHighlight";
 import { chunksFor, chunkPattern, normalizeWord, GraphemeChunkDef } from "@/lib/graphemes";
-import { selectWordAt, startFingerLoop, DwellTracker, Point } from "@/lib/hand-tracker";
+import { selectWordAt, Point } from "@/lib/hand-tracker";
 import { speak, speakSteps, stopSpeaking, announce, primeSpeech } from "@/lib/speech";
 import { installAudioUnlock, loadClip, playSequence, playChime, Playback } from "@/lib/audio";
 import { SessionLogger } from "@/lib/event-queue";
@@ -42,9 +41,8 @@ export interface PracticedWord {
   box: [number, number][];
 }
 
-type Phase = "live" | "pointing" | "coaching" | "sweeping";
+type Phase = "live" | "ready" | "coaching" | "sweeping";
 
-/** End-of-session quiz over the practiced words (REWORK R7). */
 interface QuizResultItem {
   word: string;
   said: boolean | null;
@@ -59,11 +57,15 @@ interface QuizState {
 }
 
 const SCAN_SETTLE_MS = 900;
-const QUIZ_STEP_MS = 10_000;
+const QUIZ_SAY_MS = 10_000;
 
-/** Split a block into word entries with proportional sub-boxes (§7 rule 7). */
+/** Split a block into word entries — real OCR word boxes when available. */
 function wordsOf(block: OcrBox, blockIndex: number, gen: number): WordEntry[] {
   const words: WordEntry[] = [];
+  if (block.words && block.words.length > 0) {
+    block.words.forEach((w, i) => words.push({ text: w.text, box: w.box, key: `${gen}:${blockIndex}:w${i}` }));
+    return words;
+  }
   const re = /\S+/g;
   let m: RegExpExecArray | null;
   while ((m = re.exec(block.text))) {
@@ -82,6 +84,14 @@ function wordsOf(block: OcrBox, blockIndex: number, gen: number): WordEntry[] {
   return words;
 }
 
+function boxRect(box: [number, number][]) {
+  const xs = box.map(([x]) => x);
+  const ys = box.map(([, y]) => y);
+  const left = Math.min(...xs);
+  const top = Math.min(...ys);
+  return { left, top, w: Math.max(...xs) - left, h: Math.max(...ys) - top };
+}
+
 export default function AutopsyPage() {
   const router = useRouter();
   const stage = useRef<CameraStageHandle>(null);
@@ -89,24 +99,23 @@ export default function AutopsyPage() {
   const captureGen = useRef(0);
   const busyRef = useRef(false);
   const scanningRef = useRef(false);
-  const phaseRef = useRef<Phase>("live");
+  const findingRef = useRef(false);
   const wordsRef = useRef<WordEntry[]>([]);
   const frameRef = useRef<CapturedFrame | null>(null);
-  const lastTipRef = useRef<Point | null>(null);
   const lastWordRef = useRef<WordEntry | null>(null);
   const practiceRef = useRef<PracticedWord[]>([]);
   const sweepRef = useRef<Playback | null>(null);
-  const dwellRef = useRef<DwellTracker>(new DwellTracker(700, 250, 500));
-  const stopLoopRef = useRef<(() => void) | null>(null);
   const listenerRef = useRef<VoiceListener | null>(null);
   const autoScanTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const quizRef = useRef<QuizState | null>(null);
+  const answerWindowRef = useRef<{ target: string } | null>(null);
+  const quizTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
 
   const [phase, setPhase] = useState<Phase>("live");
   const [frame, setFrame] = useState<CapturedFrame | null>(null);
   const [words, setWords] = useState<WordEntry[]>([]);
-  const [tip, setTip] = useState<Point | null>(null);
-  const [hoverKey, setHoverKey] = useState<string | null>(null);
-  const [dwellProgress, setDwellProgress] = useState(0);
+  const [located, setLocated] = useState<Point | null>(null);
+  const [finding, setFinding] = useState(false);
   const [stuck, setStuck] = useState<WordEntry | null>(null);
   const [chunks, setChunks] = useState<GraphemeChunkDef[]>([]);
   const [activeChunk, setActiveChunk] = useState(-1);
@@ -114,11 +123,6 @@ export default function AutopsyPage() {
   const [listening, setListening] = useState(false);
   const [status, setStatus] = useState("Starting camera…");
   const [quiz, setQuiz] = useState<QuizState | null>(null);
-  const quizRef = useRef<QuizState | null>(null);
-  const [quizHighlight, setQuizHighlight] = useState<[number, number][] | null>(null);
-  const answerWindowRef = useRef<{ target: string } | null>(null);
-  const quizTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
-  const pointPoll = useRef<ReturnType<typeof setInterval> | null>(null);
 
   function setQuizBoth(q: QuizState | null) {
     quizRef.current = q;
@@ -128,66 +132,13 @@ export default function AutopsyPage() {
   function clearQuizTimers() {
     if (quizTimer.current) clearTimeout(quizTimer.current);
     quizTimer.current = null;
-    if (pointPoll.current) clearInterval(pointPoll.current);
-    pointPoll.current = null;
     answerWindowRef.current = null;
-  }
-
-  function setPhaseBoth(p: Phase) {
-    phaseRef.current = p;
-    setPhase(p);
-  }
-
-  function stopLoop() {
-    stopLoopRef.current?.();
-    stopLoopRef.current = null;
   }
 
   function stopAllAudio() {
     stopSpeaking();
     sweepRef.current?.stop();
     sweepRef.current = null;
-  }
-
-  function startLoop() {
-    stopLoop();
-    dwellRef.current = new DwellTracker(700, 250, 500);
-    stopLoopRef.current = startFingerLoop({
-      getCanvas: () => stage.current?.getCanvas() ?? null,
-      onSample: (sample) => {
-        setTip(sample);
-        lastTipRef.current = sample;
-        const dims = frameRef.current;
-        if (!dims || phaseRef.current !== "pointing") return;
-        if (quizRef.current) {
-          // Quiz mode: the loop only feeds lastTipRef (the point-check poll
-          // reads it) — no dwell coaching mid-quiz.
-          setHoverKey(null);
-          setDwellProgress(0);
-          return;
-        }
-        if (busyRef.current) {
-          setHoverKey(null);
-          setDwellProgress(0);
-          return;
-        }
-        let key: string | null = null;
-        if (sample) {
-          const word = selectWordAt(
-            { x: sample.x * dims.width, y: sample.y * dims.height },
-            wordsRef.current,
-          );
-          if (word) key = word.key;
-        }
-        const res = dwellRef.current.update(key, performance.now());
-        setHoverKey(res.hover);
-        setDwellProgress(res.progress);
-        if (res.fired !== null) {
-          const word = wordsRef.current.find((w) => w.key === res.fired);
-          if (word) void coachWord(word);
-        }
-      },
-    });
   }
 
   useEffect(() => {
@@ -200,7 +151,6 @@ export default function AutopsyPage() {
       clearTimeout(micStart);
       listenerRef.current?.stop();
       listenerRef.current = null;
-      stopLoop();
       stopAllAudio();
       clearQuizTimers();
       if (autoScanTimer.current) clearTimeout(autoScanTimer.current);
@@ -218,7 +168,6 @@ export default function AutopsyPage() {
   async function rescan() {
     if (scanningRef.current) return;
     scanningRef.current = true;
-    stopLoop();
     stopAllAudio();
     busyRef.current = false;
     frameRef.current = null;
@@ -228,13 +177,12 @@ export default function AutopsyPage() {
     setStuck(null);
     setChunks([]);
     setActiveChunk(-1);
-    setHoverKey(null);
-    setDwellProgress(0);
-    setPhaseBoth("live");
+    setLocated(null);
+    setPhase("live");
     setStatus("Scanning the page…");
 
     try {
-      const captured = stage.current?.captureFrame({ freeze: false }); // one frame; preview stays live
+      const captured = stage.current?.captureFrame({ freeze: false });
       if (!captured) {
         setStatus("Camera not ready yet — tap Rescan in a moment.");
         return;
@@ -256,9 +204,8 @@ export default function AutopsyPage() {
       wordsRef.current = allWords;
       setFrame(captured);
       setWords(allWords);
-      setPhaseBoth("pointing");
-      setStatus("Point just under the word you're stuck on and hold still.");
-      startLoop();
+      setPhase("ready");
+      setStatus("Point at the word you're stuck on, then tap the button (or say “I'm stuck”).");
     } catch (err) {
       console.error(err);
       setStatus("Scanning failed — tap Rescan to try again.");
@@ -267,14 +214,50 @@ export default function AutopsyPage() {
     }
   }
 
-  /**
-   * Coach a word: fixed template, spoken twice (amended rule 4 — TTS speaks
-   * the verbatim word + deterministic syllables, never isolated phonemes).
-   */
+  /** Capture → locate finger (vision) → the OCR word there. */
+  async function locateWord(): Promise<WordEntry | null> {
+    const dims = frameRef.current;
+    if (!dims) return null;
+    const shot = stage.current?.captureFrame({ freeze: false });
+    if (!shot) return null;
+    const res = await fetch("/api/point", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ imageBase64: shot.base64 }),
+    });
+    const data = (await res.json()) as { found?: boolean; x?: number; y?: number };
+    if (!data.found || typeof data.x !== "number" || typeof data.y !== "number") return null;
+    setLocated({ x: data.x, y: data.y });
+    return selectWordAt({ x: data.x * dims.width, y: data.y * dims.height }, wordsRef.current);
+  }
+
+  /** Trigger: find the pointed word, then coach (default) or sweep. */
+  async function pointAndAct(mode: "coach" | "sweep") {
+    if (findingRef.current || busyRef.current) return;
+    findingRef.current = true;
+    setFinding(true);
+    setLocated(null);
+    setStatus("Finding your finger…");
+    try {
+      const word = await locateWord();
+      if (!word) {
+        setStatus("I couldn’t see your finger on a word — point clearly and try again.");
+        return;
+      }
+      if (mode === "sweep") await phonemeSweep(word);
+      else await coachWord(word);
+    } catch (err) {
+      console.error("point failed:", err);
+      setStatus("Something went wrong — try again.");
+    } finally {
+      findingRef.current = false;
+      setFinding(false);
+    }
+  }
+
   async function coachWord(word: WordEntry) {
-    if (busyRef.current || phaseRef.current === "coaching") return;
     busyRef.current = true;
-    setPhaseBoth("coaching");
+    setPhase("coaching");
     setStuck(word);
     lastWordRef.current = word;
     setChunks([]);
@@ -290,73 +273,48 @@ export default function AutopsyPage() {
 
     try {
       const lines = coachingLines(word.text);
-      if (lines.length > 0) {
-        await speakSteps(lines, undefined, 500); // two rounds, natural pause
-      } else {
-        await speak(word.text); // numbers/symbols: just say it
-      }
+      if (lines.length > 0) await speakSteps(lines, undefined, 500);
+      else await speak(word.text);
     } catch (err) {
       console.error("coaching TTS failed:", err);
     }
     busyRef.current = false;
-    setPhaseBoth("pointing");
+    setStuck(null); // clear the highlight so it doesn't linger (S8)
+    setPhase("ready");
     setStatus("Point at another word — or say “sound it out” for letter sounds.");
   }
 
-  /** Static-bank phoneme sweep (§7 rule 4 path) — voice command "sound it out". */
   async function phonemeSweep(word: WordEntry) {
-    if (busyRef.current) return;
     busyRef.current = true;
-    setPhaseBoth("sweeping");
+    setPhase("sweeping");
     setStuck(word);
-
     const wordChunks = chunksFor(word.text);
     const pattern = chunkPattern(wordChunks);
     setChunks(wordChunks);
-    logger.current?.log({
-      type: "autopsy_soundout",
-      word: normalizeWord(word.text),
-      grapheme: pattern,
-    });
+    logger.current?.log({ type: "autopsy_soundout", word: normalizeWord(word.text), grapheme: pattern });
     setStatus("Listen and watch each part light up…");
 
     try {
-      const buffers = await Promise.all(
-        wordChunks.map((ch) => loadClip(`/phonemes/${ch.phonemeId}.mp3`)),
-      );
-      const seq = playSequence(buffers, {
-        gapMs: 60,
-        missingMs: 300,
-        onClipStart: (i) => setActiveChunk(i),
-      });
+      const buffers = await Promise.all(wordChunks.map((ch) => loadClip(`/phonemes/${ch.phonemeId}.mp3`)));
+      const seq = playSequence(buffers, { gapMs: 60, missingMs: 300, onClipStart: (i) => setActiveChunk(i) });
       sweepRef.current = seq;
       await seq.done;
       setActiveChunk(-1);
-      await speak(word.text); // blend: the whole word once (allowed)
+      await speak(word.text);
     } catch (err) {
       console.error("phoneme sweep failed:", err);
     }
     sweepRef.current = null;
     setChunks([]);
+    setStuck(null);
     busyRef.current = false;
-    setPhaseBoth("pointing");
+    setPhase("ready");
     setStatus("Point at another word — or say “sound it out” for letter sounds.");
   }
 
-  /** The word under the finger right now (voice-triggered, no dwell wait). */
-  function pointedWord(): WordEntry | null {
-    const dims = frameRef.current;
-    const tipNow = lastTipRef.current;
-    if (!dims || !tipNow) return null;
-    return selectWordAt(
-      { x: tipNow.x * dims.width, y: tipNow.y * dims.height },
-      wordsRef.current,
-    );
-  }
-
   async function handleUtterance(text: string) {
-    // Quiz "say" window: the utterance IS the answer, not a command.
-    if (answerWindowRef.current && quizRef.current?.stage === "say" && !busyRef.current) {
+    // Quiz "say" window: the utterance IS the answer.
+    if (answerWindowRef.current && quizRef.current?.stage === "say") {
       const { target } = answerWindowRef.current;
       clearQuizTimers();
       const ok = saidWordMatches(text, target);
@@ -364,33 +322,25 @@ export default function AutopsyPage() {
       continueAfterSay(ok);
       return;
     }
-    if (quizRef.current) return; // no command dispatch mid-quiz
+    if (quizRef.current) return;
 
     const cmd = await resolveVoiceCommand(text);
-    // While the app is talking, the mic hears its own voice — only "stop"
-    // gets through.
-    if (busyRef.current && cmd.intent !== "stop") return;
+    if ((findingRef.current || busyRef.current) && cmd.intent !== "stop") return;
     switch (cmd.intent) {
       case "stuck_word":
-      case "read": {
-        const word = pointedWord() ?? lastWordRef.current;
-        if (word) void coachWord(word);
-        else setStatus("Point your finger at the word first.");
+      case "read":
+        void pointAndAct("coach");
         break;
-      }
-      case "sound_out": {
-        const word = pointedWord() ?? lastWordRef.current;
-        if (word) void phonemeSweep(word);
-        else setStatus("Point at a word first, then say “sound it out”.");
+      case "sound_out":
+        if (lastWordRef.current) void phonemeSweep(lastWordRef.current);
+        else void pointAndAct("sweep");
         break;
-      }
-      case "repeat": {
-        const word = lastWordRef.current;
-        if (word) void coachWord(word);
+      case "repeat":
+        if (lastWordRef.current) void coachWord(lastWordRef.current);
         break;
-      }
       case "stop":
         stopAllAudio();
+        busyRef.current = false;
         break;
       case "rescan":
         void rescan();
@@ -414,13 +364,12 @@ export default function AutopsyPage() {
       });
     } catch {
       setListening(false);
-      setStatus("Mic unavailable — pointing still works.");
+      setStatus("Mic unavailable — use the buttons.");
     }
   }
 
-  /* ── End-of-session quiz (R7): say it (STT fuzzy) + point at it ────────── */
+  /* ── End-of-session quiz (R7) ─────────────────────────────────────────── */
 
-  /** The current-scan word entry matching a practiced word (page may have rescanned). */
   function scanEntryFor(word: PracticedWord): WordEntry | null {
     const n = normalizeWord(word.text);
     return wordsRef.current.find((w) => normalizeWord(w.text) === n) ?? null;
@@ -428,108 +377,74 @@ export default function AutopsyPage() {
 
   async function runSayStep(index: number, results: QuizResultItem[]) {
     const item = practiceRef.current[index];
-    if (!item) {
-      finishQuiz(results);
-      return;
-    }
+    if (!item) return finishQuiz(results);
+    setStuck(scanEntryFor(item)); // glow the target word for the "say it" step
     setQuizBoth({ stage: "say", index, results });
-    setQuizHighlight(scanEntryFor(item)?.box ?? item.box);
-    busyRef.current = true;
     try {
       await speak("What is this word?");
     } catch {
-      /* the on-screen prompt still shows */
+      /* prompt shown on screen */
     }
-    busyRef.current = false;
-    if (quizRef.current?.stage !== "say") return; // skipped meanwhile
+    if (quizRef.current?.stage !== "say") return;
     answerWindowRef.current = { target: item.text };
     quizTimer.current = setTimeout(() => {
       answerWindowRef.current = null;
-      continueAfterSay(false); // no (matching) answer in time
-    }, QUIZ_STEP_MS);
+      continueAfterSay(false);
+    }, QUIZ_SAY_MS);
   }
 
   function continueAfterSay(said: boolean) {
     const q = quizRef.current;
     if (!q) return;
-    void runPointStep(q.index, q.results, said);
+    setStuck(null); // stop revealing the word before the pointing step
+    setQuizBoth({ stage: "point", index: q.index, results: q.results });
+    void speak(`Now point at the word ${practiceRef.current[q.index]?.text}.`).catch(() => {});
+    void checkPointResult(said);
   }
 
-  async function runPointStep(index: number, results: QuizResultItem[], said: boolean) {
-    const item = practiceRef.current[index];
-    if (!item) {
-      finishQuiz(results);
-      return;
-    }
-    clearQuizTimers();
-    setQuizHighlight(null); // don't reveal where it is
+  /** Capture → locate finger → did the child point at the target word? */
+  async function checkPointResult(said: boolean) {
+    const q = quizRef.current;
+    if (!q) return;
+    const item = practiceRef.current[q.index];
     const target = scanEntryFor(item);
     if (!target) {
-      // Word not on the current scan (page changed) — pointing part skipped.
-      recordResult(index, results, { word: item.text, said, pointed: null, skipped: false });
+      recordResult(q.index, q.results, { word: item.text, said, pointed: null, skipped: false });
       return;
     }
-    setQuizBoth({ stage: "point", index, results });
-    busyRef.current = true;
+    setFinding(true);
+    setStatus("Finding your finger…");
+    let pointed = false;
     try {
-      await speak(`Now point at the word ${item.text}.`);
-    } catch {
-      /* the on-screen prompt still shows */
+      const word = await locateWord();
+      pointed = !!word && normalizeWord(word.text) === normalizeWord(item.text);
+    } catch (err) {
+      console.error("quiz point failed:", err);
     }
-    busyRef.current = false;
-    if (quizRef.current?.stage !== "point") return; // skipped meanwhile
-
-    const deadline = performance.now() + QUIZ_STEP_MS;
-    pointPoll.current = setInterval(() => {
-      if (quizRef.current?.stage !== "point") {
-        clearQuizTimers();
-        return;
-      }
-      if (performance.now() > deadline) {
-        clearQuizTimers();
-        recordResult(index, results, { word: item.text, said, pointed: false, skipped: false });
-        return;
-      }
-      const dims = frameRef.current;
-      const tipNow = lastTipRef.current;
-      if (!dims || !tipNow) return;
-      const sel = selectWordAt(
-        { x: tipNow.x * dims.width, y: tipNow.y * dims.height },
-        wordsRef.current,
-      );
-      if (sel && normalizeWord(sel.text) === normalizeWord(item.text)) {
-        clearQuizTimers();
-        playChime();
-        recordResult(index, results, { word: item.text, said, pointed: true, skipped: false });
-      }
-    }, 150);
+    setFinding(false);
+    if (quizRef.current?.stage !== "point") return;
+    if (pointed) playChime();
+    recordResult(q.index, q.results, { word: item.text, said, pointed, skipped: false });
   }
 
   function recordResult(index: number, results: QuizResultItem[], item: QuizResultItem) {
     const next = [...results, item];
-    if (index + 1 < practiceRef.current.length) {
-      void runSayStep(index + 1, next);
-    } else {
-      finishQuiz(next);
-    }
+    if (index + 1 < practiceRef.current.length) void runSayStep(index + 1, next);
+    else finishQuiz(next);
   }
 
   function skipQuizWord() {
     const q = quizRef.current;
     if (!q) return;
     clearQuizTimers();
+    setStuck(null);
     const item = practiceRef.current[q.index];
-    recordResult(q.index, q.results, {
-      word: item?.text ?? "",
-      said: null,
-      pointed: null,
-      skipped: true,
-    });
+    recordResult(q.index, q.results, { word: item?.text ?? "", said: null, pointed: null, skipped: true });
   }
 
   function finishQuiz(results: QuizResultItem[]) {
     clearQuizTimers();
-    setQuizHighlight(null);
+    setStuck(null);
     setQuizBoth({ stage: "done", index: practiceRef.current.length, results });
     const said = results.filter((r) => r.said === true).length;
     const total = results.filter((r) => !r.skipped).length;
@@ -537,9 +452,9 @@ export default function AutopsyPage() {
   }
 
   async function endSession(withQuizResults?: QuizResultItem[]) {
-    // Offer the quiz first when there are practiced words (skippable).
     if (!withQuizResults && practiceRef.current.length > 0 && quizRef.current === null) {
       stopAllAudio();
+      setStuck(null);
       setQuizBoth({ stage: "offer", index: 0, results: [] });
       return;
     }
@@ -547,7 +462,6 @@ export default function AutopsyPage() {
     setQuizBoth(null);
     listenerRef.current?.stop();
     listenerRef.current = null;
-    stopLoop();
     stopAllAudio();
     const l = logger.current;
     for (const r of withQuizResults ?? []) {
@@ -560,33 +474,29 @@ export default function AutopsyPage() {
     }
     const sessionId = l?.sessionId;
     await l?.end();
-    if (sessionId) {
-      router.push(`/stats/${sessionId}`);
-    } else {
-      setStatus("Session ended (logging was unavailable — no stats).");
-    }
+    if (sessionId) router.push(`/stats/${sessionId}`);
+    else setStatus("Session ended (logging was unavailable — no stats).");
   }
 
   const frameW = frame?.width ?? 1;
   const frameH = frame?.height ?? 1;
 
   return (
-    // h-dvh + capped camera: every control fits the phone viewport, no scroll.
-    <main className="mx-auto flex h-dvh w-full max-w-md flex-col gap-2.5 overflow-y-auto p-3">
+    <main className="mx-auto flex h-dvh w-full max-w-md flex-col gap-2 overflow-hidden p-3">
       <header className="flex flex-wrap items-center gap-x-2.5 gap-y-1">
         <Link href="/" className="btn btn-ghost !px-2.5 !py-1 text-sm" aria-label="Back to features">
           ←
         </Link>
         <h1 className="font-display text-lg font-extrabold">Stuck-Word Autopsy</h1>
-        <span className="stamp stamp-det">Syllables by rule · zero AI voice</span>
+        <span className="stamp stamp-det">Syllables by rule</span>
       </header>
 
       <CameraStage
         ref={stage}
         onError={setStatus}
         onReady={scheduleAutoScan}
+        maxHeightClass="max-h-[54dvh]"
         onSourceChange={() => {
-          stopLoop();
           stopAllAudio();
           frameRef.current = null;
           wordsRef.current = [];
@@ -594,46 +504,50 @@ export default function AutopsyPage() {
           setWords([]);
           setStuck(null);
           setChunks([]);
-          setPhaseBoth("live");
+          setPhase("live");
           scheduleAutoScan();
         }}
       >
-        {/* Word outlines — aim guides (selection is by pointing). */}
+        {/* Faint word guides (accurate boxes; degenerate skipped). */}
         {frame &&
           phase !== "live" &&
+          !stuck &&
           words.map((w) => {
-            const xs = w.box.map(([x]) => x);
-            const ys = w.box.map(([, y]) => y);
-            const left = Math.min(...xs);
-            const top = Math.min(...ys);
-            const isStuck = stuck?.key === w.key;
-            const isHover = hoverKey === w.key && phase === "pointing";
+            const r = boxRect(w.box);
+            if (r.w < 3 || r.h < 3) return null;
             return (
               <div
                 key={w.key}
-                className={`absolute rounded-sm transition-colors duration-150 ${
-                  isStuck
-                    ? "bg-[rgba(255,211,77,0.4)] outline outline-2 outline-[var(--hl-strong)]"
-                    : isHover
-                      ? "bg-[rgba(255,211,77,0.25)] outline outline-2 outline-[var(--hl-strong)]"
-                      : "outline-dashed outline-1 outline-[rgba(43,108,176,0.4)]"
-                }`}
+                className="absolute rounded-sm outline-dashed outline-1 outline-[rgba(236,77,37,0.3)]"
                 style={{
-                  left: `${(left / frameW) * 100}%`,
-                  top: `${(top / frameH) * 100}%`,
-                  width: `${((Math.max(...xs) - left) / frameW) * 100}%`,
-                  height: `${((Math.max(...ys) - top) / frameH) * 100}%`,
+                  left: `${(r.left / frameW) * 100}%`,
+                  top: `${(r.top / frameH) * 100}%`,
+                  width: `${(r.w / frameW) * 100}%`,
+                  height: `${(r.h / frameH) * 100}%`,
                 }}
-              >
-                {isHover && dwellProgress > 0 && (
-                  <div
-                    className="absolute -bottom-1 left-0 h-[3px] rounded bg-[var(--hl-strong)]"
-                    style={{ width: `${dwellProgress * 100}%` }}
-                  />
-                )}
-              </div>
+              />
             );
           })}
+
+        {/* The word being coached / quizzed (yellow). */}
+        {frame &&
+          stuck &&
+          chunks.length === 0 &&
+          (() => {
+            const r = boxRect(stuck.box);
+            if (r.w < 3 || r.h < 3) return null;
+            return (
+              <div
+                className="absolute rounded-sm bg-[rgba(255,211,77,0.4)] outline outline-2 outline-[var(--hl-strong)]"
+                style={{
+                  left: `${(r.left / frameW) * 100}%`,
+                  top: `${(r.top / frameH) * 100}%`,
+                  width: `${(r.w / frameW) * 100}%`,
+                  height: `${(r.h / frameH) * 100}%`,
+                }}
+              />
+            );
+          })()}
 
         {frame && stuck && chunks.length > 0 && (
           <GraphemeSweep
@@ -645,32 +559,18 @@ export default function AutopsyPage() {
           />
         )}
 
-        {/* Quiz target highlight (say step). */}
-        {quizHighlight &&
-          (() => {
-            const xs = quizHighlight.map(([x]) => x);
-            const ys = quizHighlight.map(([, y]) => y);
-            const left = Math.min(...xs);
-            const top = Math.min(...ys);
-            return (
-              <div
-                className="absolute animate-pulse rounded-sm bg-[rgba(255,211,77,0.45)] outline outline-2 outline-[var(--hl-strong)]"
-                style={{
-                  left: `${(left / frameW) * 100}%`,
-                  top: `${(top / frameH) * 100}%`,
-                  width: `${((Math.max(...xs) - left) / frameW) * 100}%`,
-                  height: `${((Math.max(...ys) - top) / frameH) * 100}%`,
-                }}
-              />
-            );
-          })()}
-
-        {/* Pointed-spot dot. */}
-        {tip && (
+        {/* Located fingertip dot. */}
+        {located && (
           <div
-            className="absolute h-3.5 w-3.5 -translate-x-1/2 -translate-y-1/2 rounded-full border-2 border-white bg-[var(--pen)] shadow"
-            style={{ left: `${tip.x * 100}%`, top: `${tip.y * 100}%` }}
+            className="absolute h-4 w-4 -translate-x-1/2 -translate-y-1/2 rounded-full border-2 border-white bg-[var(--point)] shadow"
+            style={{ left: `${located.x * 100}%`, top: `${located.y * 100}%` }}
           />
+        )}
+
+        {finding && (
+          <div className="absolute inset-x-0 bottom-0 flex justify-center pb-2">
+            <span className="chip chip-mic !bg-white/95 !py-1 !text-[11px]">finding your finger…</span>
+          </div>
         )}
       </CameraStage>
 
@@ -687,23 +587,30 @@ export default function AutopsyPage() {
 
       <div className="flex gap-2">
         <button
-          onClick={() => void rescan()}
-          disabled={phase === "coaching" || phase === "sweeping"}
-          className="btn btn-hl flex-1 !py-2.5 text-base"
+          onClick={() => void pointAndAct("coach")}
+          disabled={finding || phase === "live" || phase === "coaching" || phase === "sweeping"}
+          className="btn btn-hl flex-[2] !py-3 text-base"
         >
-          ⟳ Rescan page
+          {finding ? "Finding…" : "👉 Help me with this word"}
         </button>
-        <button onClick={() => void endSession()} className="btn btn-ink flex-1 !py-2.5 text-base">
-          End session
+        <button
+          onClick={() => void pointAndAct("sweep")}
+          disabled={finding || phase === "live" || phase === "coaching" || phase === "sweeping"}
+          className="btn btn-ghost flex-1 !py-3 text-sm"
+        >
+          Sound out
         </button>
       </div>
 
-      <div className="card flex min-h-0 flex-col gap-1 overflow-y-auto p-2.5">
-        <p className="text-sm leading-snug text-[var(--ink)]">{status}</p>
-        <p className="mono-hint">
-          point just under a word · hold still · say “I&apos;m stuck” or “sound it out”
-        </p>
+      <div className="mt-auto flex items-center gap-2">
+        <button onClick={() => void rescan()} className="btn btn-ghost flex-1 !py-2 text-sm">
+          ⟳ Rescan
+        </button>
+        <button onClick={() => void endSession()} className="btn btn-ink flex-1 !py-2 text-sm">
+          End session
+        </button>
       </div>
+      <p className="mono-hint text-center leading-snug">{status}</p>
 
       {/* End-of-session quiz dialog (R7). */}
       {quiz && (
@@ -713,15 +620,12 @@ export default function AutopsyPage() {
               <>
                 <h2 className="font-display text-lg font-extrabold">Quiz time? 🌟</h2>
                 <p className="mt-1 text-sm text-[var(--ink-soft)]">
-                  Want to test the {practiceRef.current.length}{" "}
-                  {practiceRef.current.length === 1 ? "word" : "words"} you practiced? You can
-                  skip any word.
+                  Test the {practiceRef.current.length}{" "}
+                  {practiceRef.current.length === 1 ? "word" : "words"} you practiced? You can skip
+                  any word.
                 </p>
                 <div className="mt-3 flex gap-2">
-                  <button
-                    onClick={() => void runSayStep(0, [])}
-                    className="btn btn-hl flex-1 !py-2.5"
-                  >
+                  <button onClick={() => void runSayStep(0, [])} className="btn btn-hl flex-1 !py-2.5">
                     ▶ Start quiz
                   </button>
                   <button onClick={() => void endSession([])} className="btn btn-ghost flex-1 !py-2.5">
@@ -737,7 +641,7 @@ export default function AutopsyPage() {
             {(quiz.stage === "say" || quiz.stage === "point") && (
               <>
                 <div className="flex items-baseline gap-2">
-                  <span className="mono-hint !text-[var(--pen)]">
+                  <span className="mono-hint !text-[var(--point)]">
                     Word {quiz.index + 1} of {practiceRef.current.length}
                   </span>
                   <span className={`stamp ${quiz.stage === "say" ? "stamp-det" : "stamp-ok"}`}>
@@ -747,9 +651,18 @@ export default function AutopsyPage() {
                 <p className="mt-2 text-sm">
                   {quiz.stage === "say"
                     ? "Read the glowing word out loud."
-                    : `Find and point at the word “${practiceRef.current[quiz.index]?.text}” on the paper.`}
+                    : `Point at “${practiceRef.current[quiz.index]?.text}” on the paper, then tap Check.`}
                 </p>
-                <button onClick={skipQuizWord} className="btn btn-ghost mt-3 w-full !py-2">
+                {quiz.stage === "point" && (
+                  <button
+                    onClick={() => void checkPointResult(false)}
+                    disabled={finding}
+                    className="btn btn-hl mt-3 w-full !py-2.5"
+                  >
+                    {finding ? "Checking…" : "✓ Check where I'm pointing"}
+                  </button>
+                )}
+                <button onClick={skipQuizWord} className="btn btn-ghost mt-2 w-full !py-2">
                   Skip this word
                 </button>
               </>
@@ -758,18 +671,15 @@ export default function AutopsyPage() {
             {quiz.stage === "done" && (
               <>
                 <LottieBadge src="/lottie/star-pop.json" className="mx-auto h-20 w-20" />
-                <h2 className="font-display text-lg font-extrabold">
+                <h2 className="font-display text-center text-lg font-extrabold">
                   {quiz.results.filter((r) => r.said === true).length} of{" "}
                   {quiz.results.filter((r) => !r.skipped).length} said right! 🎉
                 </h2>
-                <p className="mt-1 text-sm text-[var(--ink-soft)]">
-                  Pointed correctly: {quiz.results.filter((r) => r.pointed === true).length} ·
-                  skipped: {quiz.results.filter((r) => r.skipped).length}
+                <p className="mt-1 text-center text-sm text-[var(--ink-soft)]">
+                  Pointed correctly: {quiz.results.filter((r) => r.pointed === true).length} · skipped:{" "}
+                  {quiz.results.filter((r) => r.skipped).length}
                 </p>
-                <button
-                  onClick={() => void endSession(quiz.results)}
-                  className="btn btn-hl mt-3 w-full !py-2.5"
-                >
+                <button onClick={() => void endSession(quiz.results)} className="btn btn-hl mt-3 w-full !py-2.5">
                   See the full results
                 </button>
               </>

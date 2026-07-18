@@ -211,6 +211,79 @@ export interface TutorRequest {
  * Streams the model's raw text through `onDelta` as it arrives, then resolves
  * with the parsed steps for the final SSE frame.
  */
+/** Sniff the image media type from base64 magic bytes (API rejects a mismatch). */
+function sniffMediaType(data: string): "image/png" | "image/webp" | "image/gif" | "image/jpeg" {
+  return data.startsWith("iVBOR")
+    ? "image/png"
+    : data.startsWith("UklGR")
+      ? "image/webp"
+      : data.startsWith("R0lGOD")
+        ? "image/gif"
+        : "image/jpeg";
+}
+
+export interface PointerLocation {
+  x: number;
+  y: number;
+}
+
+/**
+ * VISUAL POINTING (amended §7 rule 3 #2): find the tip of the student's
+ * pointing finger in a captured frame. Returns normalized 0–1 coords (top-
+ * left origin) or null when no pointing hand is visible. This replaces
+ * MediaPipe, which cannot parse the back-of-hand / fingernail view the
+ * mirror-clip camera sees. The model decides WHERE the finger is; the caller
+ * maps that to an OCR word and reads that word's text VERBATIM.
+ */
+export async function locatePointer(imageBase64: string): Promise<PointerLocation | null> {
+  const data = imageBase64.replace(/^data:image\/\w+;base64,/, "");
+  const response = await client().messages.create({
+    model: TUTOR_MODEL,
+    max_tokens: 80,
+    system:
+      "You see a photo of a worksheet with a child's hand pointing at the text. " +
+      "Find the exact TIP of the pointing finger — the end of the extended finger " +
+      "(usually the index finger), at or just past the fingernail, i.e. the spot on " +
+      "the paper the child means to indicate. This works from any angle, including " +
+      "when the camera sees the back of the hand or the fingernail. " +
+      'Respond with STRICT JSON only: {"found":true,"x":0.42,"y":0.63} where x and y ' +
+      "are fractions between 0 and 1 measured from the TOP-LEFT corner of the image " +
+      '(x rightward, y downward). If no pointing hand or finger is visible, respond {"found":false}.',
+    messages: [
+      {
+        role: "user",
+        content: [
+          {
+            type: "image",
+            source: { type: "base64", media_type: sniffMediaType(data), data },
+          },
+        ],
+      },
+    ],
+  });
+
+  const raw = response.content
+    .filter((b): b is Anthropic.TextBlock => b.type === "text")
+    .map((b) => b.text)
+    .join("");
+  try {
+    const start = raw.indexOf("{");
+    const end = raw.lastIndexOf("}");
+    const parsed = JSON.parse(raw.slice(start, end + 1)) as {
+      found?: boolean;
+      x?: unknown;
+      y?: unknown;
+    };
+    if (parsed.found === false) return null;
+    const x = Number(parsed.x);
+    const y = Number(parsed.y);
+    if (!Number.isFinite(x) || !Number.isFinite(y)) return null;
+    return { x: Math.min(1, Math.max(0, x)), y: Math.min(1, Math.max(0, y)) };
+  } catch {
+    return null;
+  }
+}
+
 export async function runTutor(
   { imageBase64, question, history, lines }: TutorRequest,
   onDelta: (text: string) => void,
@@ -226,15 +299,8 @@ export async function runTutor(
     .filter((l) => Number.isFinite(l.i) && l.text.trim().length > 0);
 
   const data = imageBase64.replace(/^data:image\/\w+;base64,/, "");
-  // The API rejects a media_type that doesn't match the actual bytes — sniff
-  // the base64 magic instead of trusting any data: prefix.
-  const mediaType = data.startsWith("iVBOR")
-    ? ("image/png" as const)
-    : data.startsWith("UklGR")
-      ? ("image/webp" as const)
-      : data.startsWith("R0lGOD")
-        ? ("image/gif" as const)
-        : ("image/jpeg" as const);
+  // The API rejects a media_type that doesn't match the actual bytes.
+  const mediaType = sniffMediaType(data);
 
   const userText =
     lineMap.length > 0

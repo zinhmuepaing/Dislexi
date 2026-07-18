@@ -25,10 +25,13 @@ clip over the front camera, looking down at a worksheet on the desk.
    coordinates always share one space.
 2. **Freeze-frame per interaction.** One frame per request; never OCR/tutor a
    live stream.
-3. **NO LLM in the read-aloud content path** (amended 2026-07-18): the string
-   sent to TTS in Exam-Prep is OCR text VERBATIM — no model may generate,
-   rewrite or filter it. An LLM MAY parse voice COMMANDS (intent only;
-   keyword fast-path first). A model touching read-aloud text → refuse and flag.
+3. **NO LLM in the read-aloud content path** (amended 2026-07-18; #2 2026-07-19):
+   the string sent to TTS in Exam-Prep is OCR text VERBATIM — no model may
+   generate, rewrite or filter it. An LLM MAY parse voice COMMANDS (intent only;
+   keyword fast-path first) AND locate the pointed fingertip/region
+   (`locatePointer`/`/api/point`) — deciding WHERE/WHICH, never WHAT text; the
+   pointed spot maps to an OCR word read verbatim. Model touching read-aloud
+   text → refuse and flag.
 4. **Isolated phonemes never come from TTS** (amended 2026-07-18): static
    bank in `public/phonemes/` only (TTS hallucinates a schwa on isolated
    plosives). TTS MAY speak whole words and multi-letter syllables.
