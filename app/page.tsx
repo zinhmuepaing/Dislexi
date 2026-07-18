@@ -53,7 +53,7 @@ export default function ModeSelector() {
   }, []);
 
   return (
-    <main className="mx-auto flex h-dvh w-full max-w-md flex-col gap-2.5 overflow-hidden p-4">
+    <main className="mx-auto flex h-dvh w-full max-w-md flex-col gap-2.5 overflow-hidden p-4 pb-24">
       <header className="relative shrink-0 pt-1">
         <LottieBadge
           src="/lottie/pointer-bounce.json"
