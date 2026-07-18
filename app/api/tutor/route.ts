@@ -11,20 +11,20 @@
  */
 
 import { NextRequest } from "next/server";
-import { runTutor, TutorTurn } from "@/lib/tutor-model";
+import { runTutor, TutorTurn, TutorLine } from "@/lib/tutor-model";
 
 export const runtime = "nodejs";
 export const maxDuration = 60;
 
 export async function POST(req: NextRequest) {
-  let body: { imageBase64?: unknown; question?: unknown; history?: unknown };
+  let body: { imageBase64?: unknown; question?: unknown; history?: unknown; lines?: unknown };
   try {
     body = await req.json();
   } catch {
     return new Response(JSON.stringify({ error: "invalid JSON body" }), { status: 400 });
   }
 
-  const { imageBase64, question, history } = body;
+  const { imageBase64, question, history, lines } = body;
   if (typeof imageBase64 !== "string" || typeof question !== "string" || !question.trim()) {
     return new Response(
       JSON.stringify({ error: "imageBase64 and question (strings) are required" }),
@@ -45,6 +45,8 @@ export async function POST(req: NextRequest) {
             imageBase64,
             question,
             history: Array.isArray(history) ? (history as TutorTurn[]) : undefined,
+            // OCR line map (adapter sanitizes) — enables anchored regions/aids.
+            lines: Array.isArray(lines) ? (lines as TutorLine[]) : undefined,
           },
           (delta) => send({ delta }),
         );

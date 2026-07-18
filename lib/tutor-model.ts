@@ -44,9 +44,25 @@ export interface TutorRegion {
   h: number;
 }
 
+/** Visual aid drawn on the frozen frame while a step narrates. */
+export interface TutorAid {
+  kind: "box" | "circle" | "arrow";
+  region: TutorRegion;
+  /** Arrow target (arrows point region → to). */
+  to?: TutorRegion;
+}
+
 export interface TutorStep {
   say: string;
   region: TutorRegion;
+  aids?: TutorAid[];
+}
+
+/** OCR line map sent by the client: index, verbatim text, NORMALIZED box. */
+export interface TutorLine {
+  i: number;
+  text: string;
+  box: TutorRegion;
 }
 
 export interface TutorTurn {
@@ -58,18 +74,68 @@ const SYSTEM_PROMPT = `You are a patient, encouraging tutor for a primary-school
 
 Explain step by step, one small idea at a time, in simple spoken English suitable for a child. Guide the student to the answer; do not just state it. Never diagnose, never comment on the student's ability or emotions.
 
-Respond with STRICT JSON only — no prose, no markdown fences, nothing outside the JSON object:
+Respond with STRICT JSON only — no prose, no markdown fences, nothing outside the JSON object.
 
-{"steps":[{"say":"<one short spoken sentence>","region":{"x":0.31,"y":0.42,"w":0.2,"h":0.06}}]}
+When the user message includes a WORKSHEET LINES list (index: text), DO NOT estimate coordinates. Anchor every step to a listed line instead:
 
-Rules:
+{"steps":[{"say":"<one short spoken sentence>","anchor":{"line":3,"phrase":"3/4"},"aids":[{"kind":"circle","line":3,"phrase":"3/4"},{"kind":"arrow","line":3,"phrase":"3/4","toLine":5,"toPhrase":"9/12"}]}]}
+
+Anchor rules:
+- "line": the index from the WORKSHEET LINES list the step talks about.
+- "phrase": the EXACT characters copied from that line that the step refers to (a number, a word, a blank). Omit "phrase" to mean the whole line.
+- "aids": optional, at most 2 per step — "box" or "circle" marks an anchor; "arrow" points from the aid's anchor to "toLine"/"toPhrase". Use aids when they genuinely help (circle the numbers being compared, arrow from a value to where it goes).
+
+Only when NO lines list is provided, fall back to:
+
+{"steps":[{"say":"...","region":{"x":0.31,"y":0.42,"w":0.2,"h":0.06}}]}
+
+with region NORMALIZED (0-1) to the image. General rules:
 - "say": one short sentence to be read aloud. 2 to 6 steps total.
-- "region": the rectangle on the worksheet image the step refers to, NORMALIZED to the image dimensions — x, y, w, h are all fractions between 0 and 1, where (x, y) is the top-left corner.
-- Every step must have a region pointing at the exact part of the worksheet it talks about (the question text, a number, a diagram, a blank to fill).
-- Follow-up questions continue the same worksheet; keep referring to regions on the same image.`;
+- Every step must point at the exact part of the worksheet it talks about.
+- Follow-up questions continue the same worksheet; keep anchoring to the same lines/image.`;
 
-/** Tolerant JSON extraction: strips code fences / stray prose, clamps regions to 0-1. */
-export function parseSteps(raw: string): TutorStep[] {
+const clamp01 = (n: unknown) => Math.min(1, Math.max(0, Number(n) || 0));
+
+/**
+ * Resolve a line/phrase anchor to a normalized rect DETERMINISTICALLY: the
+ * line's OCR box, narrowed to the phrase's proportional char span (§7 rule 7
+ * approximation — same as the karaoke sub-boxes). This is why the anchored
+ * mode is accurate: the model never emits coordinates, geometry comes from
+ * OCR alone.
+ */
+function resolveAnchor(
+  lineIdx: unknown,
+  phrase: unknown,
+  lines: TutorLine[],
+): TutorRegion | null {
+  const ln = lines.find((l) => l.i === Number(lineIdx));
+  if (!ln) return null;
+  const total = Math.max(1, ln.text.length);
+  let start = 0;
+  let len = total;
+  if (typeof phrase === "string" && phrase.trim()) {
+    const idx = ln.text.toLowerCase().indexOf(phrase.trim().toLowerCase());
+    if (idx >= 0) {
+      start = idx;
+      len = phrase.trim().length;
+    }
+  }
+  const startFrac = Math.min(1, start / total);
+  const lenFrac = Math.min(1 - startFrac, len / total);
+  return {
+    x: ln.box.x + ln.box.w * startFrac,
+    y: ln.box.y,
+    w: ln.box.w * lenFrac,
+    h: ln.box.h,
+  };
+}
+
+/**
+ * Tolerant JSON extraction: strips code fences / stray prose. With a line
+ * map, anchors (and aids) resolve to OCR-derived rects; without one, raw
+ * regions are clamped to 0-1 (legacy mode).
+ */
+export function parseSteps(raw: string, lines?: TutorLine[]): TutorStep[] {
   let text = raw.trim();
   const fence = text.match(/```(?:json)?\s*([\s\S]*?)```/);
   if (fence) text = fence[1].trim();
@@ -85,15 +151,50 @@ export function parseSteps(raw: string): TutorStep[] {
   const rawSteps = (parsed as { steps?: unknown[] })?.steps;
   if (!Array.isArray(rawSteps)) return [];
 
-  const clamp = (n: unknown) => Math.min(1, Math.max(0, Number(n) || 0));
   return rawSteps
     .map((s) => {
-      const step = s as { say?: unknown; region?: Record<string, unknown> };
-      const r = step.region ?? {};
-      return {
-        say: String(step.say ?? "").trim(),
-        region: { x: clamp(r.x), y: clamp(r.y), w: clamp(r.w), h: clamp(r.h) },
+      const step = s as {
+        say?: unknown;
+        region?: Record<string, unknown>;
+        anchor?: { line?: unknown; phrase?: unknown };
+        aids?: unknown[];
       };
+
+      let region: TutorRegion | null = null;
+      if (lines?.length && step.anchor) {
+        region = resolveAnchor(step.anchor.line, step.anchor.phrase, lines);
+      }
+      if (!region) {
+        const r = step.region ?? {};
+        region = { x: clamp01(r.x), y: clamp01(r.y), w: clamp01(r.w), h: clamp01(r.h) };
+      }
+
+      const aids: TutorAid[] = [];
+      if (lines?.length && Array.isArray(step.aids)) {
+        for (const a of step.aids.slice(0, 2)) {
+          const aid = a as {
+            kind?: unknown;
+            line?: unknown;
+            phrase?: unknown;
+            toLine?: unknown;
+            toPhrase?: unknown;
+          };
+          if (aid.kind !== "box" && aid.kind !== "circle" && aid.kind !== "arrow") continue;
+          const r = resolveAnchor(aid.line, aid.phrase, lines);
+          if (!r) continue;
+          if (aid.kind === "arrow") {
+            const to = resolveAnchor(aid.toLine, aid.toPhrase, lines);
+            if (!to) continue;
+            aids.push({ kind: aid.kind, region: r, to });
+          } else {
+            aids.push({ kind: aid.kind, region: r });
+          }
+        }
+      }
+
+      const result: TutorStep = { say: String(step.say ?? "").trim(), region };
+      if (aids.length > 0) result.aids = aids;
+      return result;
     })
     .filter((s) => s.say.length > 0);
 }
@@ -102,6 +203,8 @@ export interface TutorRequest {
   imageBase64: string;
   question: string;
   history?: TutorTurn[];
+  /** OCR line map (normalized boxes) — enables anchored regions + aids. */
+  lines?: TutorLine[];
 }
 
 /**
@@ -109,9 +212,19 @@ export interface TutorRequest {
  * with the parsed steps for the final SSE frame.
  */
 export async function runTutor(
-  { imageBase64, question, history }: TutorRequest,
+  { imageBase64, question, history, lines }: TutorRequest,
   onDelta: (text: string) => void,
 ): Promise<TutorStep[]> {
+  // Sanitize the line map: cap size, force numeric indices/boxes.
+  const lineMap: TutorLine[] = (lines ?? [])
+    .slice(0, 80)
+    .map((l) => ({
+      i: Number(l.i),
+      text: String(l.text).slice(0, 200),
+      box: { x: clamp01(l.box?.x), y: clamp01(l.box?.y), w: clamp01(l.box?.w), h: clamp01(l.box?.h) },
+    }))
+    .filter((l) => Number.isFinite(l.i) && l.text.trim().length > 0);
+
   const data = imageBase64.replace(/^data:image\/\w+;base64,/, "");
   // The API rejects a media_type that doesn't match the actual bytes — sniff
   // the base64 magic instead of trusting any data: prefix.
@@ -123,6 +236,13 @@ export async function runTutor(
         ? ("image/gif" as const)
         : ("image/jpeg" as const);
 
+  const userText =
+    lineMap.length > 0
+      ? `${question}\n\nWORKSHEET LINES (index: text):\n${lineMap
+          .map((l) => `${l.i}: ${l.text}`)
+          .join("\n")}`
+      : question;
+
   const messages: Anthropic.MessageParam[] = [
     ...(history ?? []).map((t) => ({ role: t.role, content: t.content })),
     {
@@ -130,7 +250,7 @@ export async function runTutor(
       content: [
         // Text BEFORE image — per the DeskTutor reference, the model reads the
         // question first, which improves region accuracy.
-        { type: "text" as const, text: question },
+        { type: "text" as const, text: userText },
         {
           type: "image" as const,
           source: { type: "base64" as const, media_type: mediaType, data },
@@ -163,7 +283,7 @@ export async function runTutor(
     .filter((b): b is Anthropic.TextBlock => b.type === "text")
     .map((b) => b.text)
     .join("");
-  return parseSteps(fullText);
+  return parseSteps(fullText, lineMap.length > 0 ? lineMap : undefined);
 }
 
 const VOICE_INTENTS = new Set(["read", "set_scope", "stuck_word", "repeat", "stop", "rescan", "none"]);

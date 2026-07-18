@@ -197,6 +197,43 @@ const box = (l: number, t: number, r: number, b: number): [number, number][] => 
 
   assert.deepEqual(parseSteps("no json here"), []);
   assert.deepEqual(parseSteps('{"steps":[{"say":"","region":{}}]}'), []); // empty say dropped
+
+  // Anchored mode: line/phrase anchors resolve to OCR-derived rects (the
+  // model never emits coordinates) and aids resolve alongside.
+  const lines = [
+    { i: 0, text: "Compare 3/4 and 2/3", box: { x: 0.1, y: 0.2, w: 0.5, h: 0.05 } },
+    { i: 1, text: "Answer: ____", box: { x: 0.1, y: 0.3, w: 0.3, h: 0.05 } },
+  ];
+  const anchored = parseSteps(
+    JSON.stringify({
+      steps: [
+        {
+          say: "Look at the fractions.",
+          anchor: { line: 0, phrase: "3/4" },
+          aids: [
+            { kind: "circle", line: 0, phrase: "3/4" },
+            { kind: "arrow", line: 0, phrase: "3/4", toLine: 1, toPhrase: "____" },
+          ],
+        },
+      ],
+    }),
+    lines,
+  );
+  assert.equal(anchored.length, 1);
+  // "3/4" starts at char 8 of 19 → x = 0.1 + 0.5·(8/19), w = 0.5·(3/19).
+  const r = anchored[0].region;
+  assert.ok(Math.abs(r.x - (0.1 + 0.5 * (8 / 19))) < 1e-9);
+  assert.ok(Math.abs(r.w - 0.5 * (3 / 19)) < 1e-9);
+  assert.equal(r.y, 0.2);
+  assert.equal(anchored[0].aids?.length, 2);
+  assert.equal(anchored[0].aids?.[1].kind, "arrow");
+  assert.ok(anchored[0].aids?.[1].to); // arrow resolved its target
+  // Unknown line index → falls back to the (clamped) raw region.
+  const fallback = parseSteps(
+    '{"steps":[{"say":"Hi","anchor":{"line":9},"region":{"x":0.2,"y":0.2,"w":0.1,"h":0.1}}]}',
+    lines,
+  );
+  assert.deepEqual(fallback[0].region, { x: 0.2, y: 0.2, w: 0.1, h: 0.1 });
 }
 
 // ── buildSentences: group lines by punctuation + geometry, verbatim join ─────
