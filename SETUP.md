@@ -55,7 +55,7 @@ create table events (
   session_id uuid not null references sessions(id),
   ts timestamptz not null default now(),
   type text not null check (type in
-    ('read','reread','stuck_word','autopsy_soundout','trace_complete','tutor_question')),
+    ('read','reread','stuck_word','autopsy_soundout','trace_complete','tutor_question','quiz_result')),
   word text,            -- word or phrase read / stuck on
   grapheme text,        -- failing pattern, e.g. 'ar' (autopsy events)
   question_ref text,    -- e.g. 'Q2' when inferable
@@ -68,6 +68,17 @@ create index on events (type, ts);
 3. You should see **Success. No rows returned.**
 4. Verify: open **Table Editor** in the sidebar — you should see `sessions` and
    `events` tables.
+
+### MIGRATION (existing projects created before 2026-07-18)
+
+The end-of-session quiz logs `quiz_result` events. If your `events` table was
+created with the old check constraint, run this once in the SQL Editor:
+
+```sql
+alter table events drop constraint events_type_check;
+alter table events add constraint events_type_check check (type in
+  ('read','reread','stuck_word','autopsy_soundout','trace_complete','tutor_question','quiz_result'));
+```
 
 ---
 

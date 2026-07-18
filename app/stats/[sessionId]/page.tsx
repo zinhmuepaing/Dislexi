@@ -276,6 +276,25 @@ export default function StatsPage() {
                 .map((g) => g.grapheme)
                 .join(", ")}`}
           </p>
+
+          {stats.quiz && (
+            <section className="card p-3">
+              <div className="flex items-baseline justify-between gap-2">
+                <h2 className="text-sm font-semibold">Word quiz score</h2>
+                <span className="stamp stamp-ok">end-of-session quiz</span>
+              </div>
+              <p className="mt-2 font-display text-2xl font-extrabold">
+                {stats.quiz.saidCorrect}/{stats.quiz.saidTotal || stats.quiz.total}
+                <span className="ml-2 text-sm font-normal text-[var(--ink-soft)]">
+                  words read correctly
+                </span>
+              </p>
+              <p className="mono-hint mt-1">
+                pointed correctly: {stats.quiz.pointedCorrect}/{stats.quiz.pointedTotal} · skipped:{" "}
+                {stats.quiz.skipped} · {stats.quiz.total} practiced
+              </p>
+            </section>
+          )}
           {CHARTS.map(({ key, title }) => (
             <section key={key} className="card p-3">
               <h2 className="mb-2 text-sm font-semibold">{title}</h2>

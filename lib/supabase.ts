@@ -30,7 +30,8 @@ export type EventType =
   | "stuck_word"
   | "autopsy_soundout"
   | "trace_complete"
-  | "tutor_question";
+  | "tutor_question"
+  | "quiz_result";
 
 export interface SessionEvent {
   type: EventType;

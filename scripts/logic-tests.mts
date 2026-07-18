@@ -18,6 +18,7 @@ import { parseSteps } from "../lib/tutor-model";
 import { buildSentences, buildParagraphs, blockToSentenceMap, localWordAt } from "../lib/sentences";
 import { fastParseCommand } from "../lib/voice-commands";
 import { syllablesOf, coachingLines } from "../lib/syllables";
+import { similarity, saidWordMatches } from "../lib/text-match";
 
 const box = (l: number, t: number, r: number, b: number): [number, number][] => [
   [l, t],
@@ -180,6 +181,51 @@ const box = (l: number, t: number, r: number, b: number): [number, number][] => 
   assert.equal(stats.topWords[0].word, "cat");
   assert.deepEqual(stats.pacingGapsSeconds, [10, 20, 10]);
   assert.equal(stats.medianGapSeconds, 10);
+}
+
+// ── text-match: quiz answer verification (deterministic, no model) ───────────
+{
+  assert.equal(similarity("awards", "Awards"), 1);
+  assert.ok(similarity("awards", "award") >= 0.8); // minor STT slip passes
+  assert.ok(similarity("cat", "elephant") < 0.3);
+  assert.equal(saidWordMatches("Awards", "awards"), true);
+  assert.equal(saidWordMatches("um it says awards I think", "awards"), true);
+  assert.equal(saidWordMatches("a words", "awards"), true); // STT split — embedded match
+  assert.equal(saidWordMatches("banana", "awards"), false);
+  assert.equal(saidWordMatches("", "awards"), false);
+}
+
+// ── computeStats: quiz_result aggregation ────────────────────────────────────
+{
+  const t = (s: number) => new Date(Date.UTC(2026, 0, 1, 0, 0, s)).toISOString();
+  const quizStats = computeStats([
+    { ts: t(0), type: "stuck_word", word: "awards", grapheme: null, question_ref: null },
+    {
+      ts: t(10), type: "quiz_result", word: "awards", grapheme: null, question_ref: null,
+      payload: { said: true, pointed: true, skipped: false },
+    },
+    {
+      ts: t(20), type: "quiz_result", word: "battery", grapheme: null, question_ref: null,
+      payload: { said: false, pointed: null, skipped: false },
+    },
+    {
+      ts: t(30), type: "quiz_result", word: "charge", grapheme: null, question_ref: null,
+      payload: { said: null, pointed: null, skipped: true },
+    },
+  ]);
+  assert.deepEqual(quizStats.quiz, {
+    total: 3,
+    saidCorrect: 1,
+    saidTotal: 2,
+    pointedCorrect: 1,
+    pointedTotal: 1,
+    skipped: 1,
+  });
+  // No quiz events → quiz stays null (stats page hides the card).
+  const noQuiz = computeStats([
+    { ts: t(0), type: "read", word: "cat", grapheme: null, question_ref: null },
+  ]);
+  assert.equal(noQuiz.quiz, null);
 }
 
 // ── parseSteps: strict JSON, fences, clamping, junk rejection ────────────────

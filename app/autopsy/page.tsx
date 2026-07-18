@@ -25,9 +25,10 @@ import { OcrBox, subBoxFor } from "@/components/KaraokeHighlight";
 import { chunksFor, chunkPattern, normalizeWord, GraphemeChunkDef } from "@/lib/graphemes";
 import { selectWordAt, startFingerLoop, DwellTracker, Point } from "@/lib/hand-tracker";
 import { speak, speakSteps, stopSpeaking, announce, primeSpeech } from "@/lib/speech";
-import { installAudioUnlock, loadClip, playSequence, Playback } from "@/lib/audio";
+import { installAudioUnlock, loadClip, playSequence, playChime, Playback } from "@/lib/audio";
 import { SessionLogger } from "@/lib/event-queue";
 import { coachingLines } from "@/lib/syllables";
+import { saidWordMatches } from "@/lib/text-match";
 import { resolveVoiceCommand } from "@/lib/voice-commands";
 import { startVoiceListener, VoiceListener } from "@/lib/stt";
 
@@ -42,7 +43,22 @@ export interface PracticedWord {
 
 type Phase = "live" | "pointing" | "coaching" | "sweeping";
 
+/** End-of-session quiz over the practiced words (REWORK R7). */
+interface QuizResultItem {
+  word: string;
+  said: boolean | null;
+  pointed: boolean | null;
+  skipped: boolean;
+}
+
+interface QuizState {
+  stage: "offer" | "say" | "point" | "done";
+  index: number;
+  results: QuizResultItem[];
+}
+
 const SCAN_SETTLE_MS = 900;
+const QUIZ_STEP_MS = 10_000;
 
 /** Split a block into word entries with proportional sub-boxes (§7 rule 7). */
 function wordsOf(block: OcrBox, blockIndex: number, gen: number): WordEntry[] {
@@ -96,6 +112,25 @@ export default function AutopsyPage() {
   const [practicedCount, setPracticedCount] = useState(0);
   const [listening, setListening] = useState(false);
   const [status, setStatus] = useState("Starting camera…");
+  const [quiz, setQuiz] = useState<QuizState | null>(null);
+  const quizRef = useRef<QuizState | null>(null);
+  const [quizHighlight, setQuizHighlight] = useState<[number, number][] | null>(null);
+  const answerWindowRef = useRef<{ target: string } | null>(null);
+  const quizTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const pointPoll = useRef<ReturnType<typeof setInterval> | null>(null);
+
+  function setQuizBoth(q: QuizState | null) {
+    quizRef.current = q;
+    setQuiz(q);
+  }
+
+  function clearQuizTimers() {
+    if (quizTimer.current) clearTimeout(quizTimer.current);
+    quizTimer.current = null;
+    if (pointPoll.current) clearInterval(pointPoll.current);
+    pointPoll.current = null;
+    answerWindowRef.current = null;
+  }
 
   function setPhaseBoth(p: Phase) {
     phaseRef.current = p;
@@ -123,6 +158,13 @@ export default function AutopsyPage() {
         lastTipRef.current = sample;
         const dims = frameRef.current;
         if (!dims || phaseRef.current !== "pointing") return;
+        if (quizRef.current) {
+          // Quiz mode: the loop only feeds lastTipRef (the point-check poll
+          // reads it) — no dwell coaching mid-quiz.
+          setHoverKey(null);
+          setDwellProgress(0);
+          return;
+        }
         if (busyRef.current) {
           setHoverKey(null);
           setDwellProgress(0);
@@ -159,6 +201,7 @@ export default function AutopsyPage() {
       listenerRef.current = null;
       stopLoop();
       stopAllAudio();
+      clearQuizTimers();
       if (autoScanTimer.current) clearTimeout(autoScanTimer.current);
     };
     // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -311,6 +354,17 @@ export default function AutopsyPage() {
   }
 
   async function handleUtterance(text: string) {
+    // Quiz "say" window: the utterance IS the answer, not a command.
+    if (answerWindowRef.current && quizRef.current?.stage === "say" && !busyRef.current) {
+      const { target } = answerWindowRef.current;
+      clearQuizTimers();
+      const ok = saidWordMatches(text, target);
+      if (ok) playChime();
+      continueAfterSay(ok);
+      return;
+    }
+    if (quizRef.current) return; // no command dispatch mid-quiz
+
     const cmd = await resolveVoiceCommand(text);
     // While the app is talking, the mic hears its own voice — only "stop"
     // gets through.
@@ -363,12 +417,146 @@ export default function AutopsyPage() {
     }
   }
 
-  async function endSession() {
+  /* ── End-of-session quiz (R7): say it (STT fuzzy) + point at it ────────── */
+
+  /** The current-scan word entry matching a practiced word (page may have rescanned). */
+  function scanEntryFor(word: PracticedWord): WordEntry | null {
+    const n = normalizeWord(word.text);
+    return wordsRef.current.find((w) => normalizeWord(w.text) === n) ?? null;
+  }
+
+  async function runSayStep(index: number, results: QuizResultItem[]) {
+    const item = practiceRef.current[index];
+    if (!item) {
+      finishQuiz(results);
+      return;
+    }
+    setQuizBoth({ stage: "say", index, results });
+    setQuizHighlight(scanEntryFor(item)?.box ?? item.box);
+    busyRef.current = true;
+    try {
+      await speak("What is this word?");
+    } catch {
+      /* the on-screen prompt still shows */
+    }
+    busyRef.current = false;
+    if (quizRef.current?.stage !== "say") return; // skipped meanwhile
+    answerWindowRef.current = { target: item.text };
+    quizTimer.current = setTimeout(() => {
+      answerWindowRef.current = null;
+      continueAfterSay(false); // no (matching) answer in time
+    }, QUIZ_STEP_MS);
+  }
+
+  function continueAfterSay(said: boolean) {
+    const q = quizRef.current;
+    if (!q) return;
+    void runPointStep(q.index, q.results, said);
+  }
+
+  async function runPointStep(index: number, results: QuizResultItem[], said: boolean) {
+    const item = practiceRef.current[index];
+    if (!item) {
+      finishQuiz(results);
+      return;
+    }
+    clearQuizTimers();
+    setQuizHighlight(null); // don't reveal where it is
+    const target = scanEntryFor(item);
+    if (!target) {
+      // Word not on the current scan (page changed) — pointing part skipped.
+      recordResult(index, results, { word: item.text, said, pointed: null, skipped: false });
+      return;
+    }
+    setQuizBoth({ stage: "point", index, results });
+    busyRef.current = true;
+    try {
+      await speak(`Now point at the word ${item.text}.`);
+    } catch {
+      /* the on-screen prompt still shows */
+    }
+    busyRef.current = false;
+    if (quizRef.current?.stage !== "point") return; // skipped meanwhile
+
+    const deadline = performance.now() + QUIZ_STEP_MS;
+    pointPoll.current = setInterval(() => {
+      if (quizRef.current?.stage !== "point") {
+        clearQuizTimers();
+        return;
+      }
+      if (performance.now() > deadline) {
+        clearQuizTimers();
+        recordResult(index, results, { word: item.text, said, pointed: false, skipped: false });
+        return;
+      }
+      const dims = frameRef.current;
+      const tipNow = lastTipRef.current;
+      if (!dims || !tipNow) return;
+      const sel = selectWordAt(
+        { x: tipNow.x * dims.width, y: tipNow.y * dims.height },
+        wordsRef.current,
+      );
+      if (sel && normalizeWord(sel.text) === normalizeWord(item.text)) {
+        clearQuizTimers();
+        playChime();
+        recordResult(index, results, { word: item.text, said, pointed: true, skipped: false });
+      }
+    }, 150);
+  }
+
+  function recordResult(index: number, results: QuizResultItem[], item: QuizResultItem) {
+    const next = [...results, item];
+    if (index + 1 < practiceRef.current.length) {
+      void runSayStep(index + 1, next);
+    } else {
+      finishQuiz(next);
+    }
+  }
+
+  function skipQuizWord() {
+    const q = quizRef.current;
+    if (!q) return;
+    clearQuizTimers();
+    const item = practiceRef.current[q.index];
+    recordResult(q.index, q.results, {
+      word: item?.text ?? "",
+      said: null,
+      pointed: null,
+      skipped: true,
+    });
+  }
+
+  function finishQuiz(results: QuizResultItem[]) {
+    clearQuizTimers();
+    setQuizHighlight(null);
+    setQuizBoth({ stage: "done", index: practiceRef.current.length, results });
+    const said = results.filter((r) => r.said === true).length;
+    const total = results.filter((r) => !r.skipped).length;
+    announce(total > 0 ? `You got ${said} of ${total} words. Well done!` : "Quiz finished.");
+  }
+
+  async function endSession(withQuizResults?: QuizResultItem[]) {
+    // Offer the quiz first when there are practiced words (skippable).
+    if (!withQuizResults && practiceRef.current.length > 0 && quizRef.current === null) {
+      stopAllAudio();
+      setQuizBoth({ stage: "offer", index: 0, results: [] });
+      return;
+    }
+    clearQuizTimers();
+    setQuizBoth(null);
     listenerRef.current?.stop();
     listenerRef.current = null;
     stopLoop();
     stopAllAudio();
     const l = logger.current;
+    for (const r of withQuizResults ?? []) {
+      if (!r.word) continue;
+      l?.log({
+        type: "quiz_result",
+        word: normalizeWord(r.word),
+        payload: { said: r.said, pointed: r.pointed, skipped: r.skipped },
+      });
+    }
     const sessionId = l?.sessionId;
     await l?.end();
     if (sessionId) {
@@ -456,6 +644,26 @@ export default function AutopsyPage() {
           />
         )}
 
+        {/* Quiz target highlight (say step). */}
+        {quizHighlight &&
+          (() => {
+            const xs = quizHighlight.map(([x]) => x);
+            const ys = quizHighlight.map(([, y]) => y);
+            const left = Math.min(...xs);
+            const top = Math.min(...ys);
+            return (
+              <div
+                className="absolute animate-pulse rounded-sm bg-[rgba(255,211,77,0.45)] outline outline-2 outline-[var(--hl-strong)]"
+                style={{
+                  left: `${(left / frameW) * 100}%`,
+                  top: `${(top / frameH) * 100}%`,
+                  width: `${((Math.max(...xs) - left) / frameW) * 100}%`,
+                  height: `${((Math.max(...ys) - top) / frameH) * 100}%`,
+                }}
+              />
+            );
+          })()}
+
         {/* Pointed-spot dot. */}
         {tip && (
           <div
@@ -495,6 +703,78 @@ export default function AutopsyPage() {
           point just under a word · hold still · say “I&apos;m stuck” or “sound it out”
         </p>
       </div>
+
+      {/* End-of-session quiz dialog (R7). */}
+      {quiz && (
+        <div className="fixed inset-0 z-30 flex items-end justify-center bg-[rgba(34,48,63,0.35)] p-4 pb-8">
+          <div className="card fadein w-full max-w-md p-4">
+            {quiz.stage === "offer" && (
+              <>
+                <h2 className="font-display text-lg font-extrabold">Quiz time? 🌟</h2>
+                <p className="mt-1 text-sm text-[var(--ink-soft)]">
+                  Want to test the {practiceRef.current.length}{" "}
+                  {practiceRef.current.length === 1 ? "word" : "words"} you practiced? You can
+                  skip any word.
+                </p>
+                <div className="mt-3 flex gap-2">
+                  <button
+                    onClick={() => void runSayStep(0, [])}
+                    className="btn btn-hl flex-1 !py-2.5"
+                  >
+                    ▶ Start quiz
+                  </button>
+                  <button onClick={() => void endSession([])} className="btn btn-ghost flex-1 !py-2.5">
+                    Skip to results
+                  </button>
+                </div>
+                {!listening && (
+                  <p className="mono-hint mt-2">tip: turn the mic on so I can hear your answers</p>
+                )}
+              </>
+            )}
+
+            {(quiz.stage === "say" || quiz.stage === "point") && (
+              <>
+                <div className="flex items-baseline gap-2">
+                  <span className="mono-hint !text-[var(--pen)]">
+                    Word {quiz.index + 1} of {practiceRef.current.length}
+                  </span>
+                  <span className={`stamp ${quiz.stage === "say" ? "stamp-det" : "stamp-ok"}`}>
+                    {quiz.stage === "say" ? "Say it" : "Point at it"}
+                  </span>
+                </div>
+                <p className="mt-2 text-sm">
+                  {quiz.stage === "say"
+                    ? "Read the glowing word out loud."
+                    : `Find and point at the word “${practiceRef.current[quiz.index]?.text}” on the paper.`}
+                </p>
+                <button onClick={skipQuizWord} className="btn btn-ghost mt-3 w-full !py-2">
+                  Skip this word
+                </button>
+              </>
+            )}
+
+            {quiz.stage === "done" && (
+              <>
+                <h2 className="font-display text-lg font-extrabold">
+                  {quiz.results.filter((r) => r.said === true).length} of{" "}
+                  {quiz.results.filter((r) => !r.skipped).length} said right! 🎉
+                </h2>
+                <p className="mt-1 text-sm text-[var(--ink-soft)]">
+                  Pointed correctly: {quiz.results.filter((r) => r.pointed === true).length} ·
+                  skipped: {quiz.results.filter((r) => r.skipped).length}
+                </p>
+                <button
+                  onClick={() => void endSession(quiz.results)}
+                  className="btn btn-hl mt-3 w-full !py-2.5"
+                >
+                  See the full results
+                </button>
+              </>
+            )}
+          </div>
+        </div>
+      )}
     </main>
   );
 }

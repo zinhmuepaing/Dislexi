@@ -197,7 +197,7 @@ create table events (
   session_id uuid not null references sessions(id),
   ts timestamptz not null default now(),
   type text not null check (type in
-    ('read','reread','stuck_word','autopsy_soundout','trace_complete','tutor_question')),
+    ('read','reread','stuck_word','autopsy_soundout','trace_complete','tutor_question','quiz_result')),
   word text,            -- word or phrase read / stuck on
   grapheme text,        -- failing pattern, e.g. 'ar' (autopsy events)
   question_ref text,    -- e.g. 'Q2' when inferable

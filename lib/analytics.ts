@@ -12,6 +12,18 @@ export interface EventRow {
   word: string | null;
   grapheme: string | null;
   question_ref: string | null;
+  /** jsonb payload — quiz_result carries {said, pointed, skipped}. */
+  payload?: Record<string, unknown> | null;
+}
+
+/** End-of-session quiz score (null when no quiz was taken). */
+export interface QuizStats {
+  total: number;
+  saidCorrect: number;
+  saidTotal: number;
+  pointedCorrect: number;
+  pointedTotal: number;
+  skipped: number;
 }
 
 export interface SessionStats {
@@ -25,6 +37,7 @@ export interface SessionStats {
   medianGapSeconds: number | null;
   firstEventAt: string | null;
   lastEventAt: string | null;
+  quiz: QuizStats | null;
 }
 
 export function computeStats(events: EventRow[]): SessionStats {
@@ -33,6 +46,8 @@ export function computeStats(events: EventRow[]): SessionStats {
   const wordCounts: Record<string, number> = {};
   const graphemeCounts: Record<string, number> = {};
 
+  let quiz: QuizStats | null = null;
+
   for (const e of events) {
     countsByType[e.type] = (countsByType[e.type] ?? 0) + 1;
     if (e.type === "reread" && e.question_ref) {
@@ -40,6 +55,23 @@ export function computeStats(events: EventRow[]): SessionStats {
     }
     if (e.word) wordCounts[e.word] = (wordCounts[e.word] ?? 0) + 1;
     if (e.grapheme) graphemeCounts[e.grapheme] = (graphemeCounts[e.grapheme] ?? 0) + 1;
+    if (e.type === "quiz_result") {
+      quiz ??= { total: 0, saidCorrect: 0, saidTotal: 0, pointedCorrect: 0, pointedTotal: 0, skipped: 0 };
+      quiz.total++;
+      const p = (e.payload ?? {}) as { said?: unknown; pointed?: unknown; skipped?: unknown };
+      if (p.skipped === true) {
+        quiz.skipped++;
+      } else {
+        if (typeof p.said === "boolean") {
+          quiz.saidTotal++;
+          if (p.said) quiz.saidCorrect++;
+        }
+        if (typeof p.pointed === "boolean") {
+          quiz.pointedTotal++;
+          if (p.pointed) quiz.pointedCorrect++;
+        }
+      }
+    }
   }
 
   const top = (counts: Record<string, number>, n: number) =>
@@ -70,6 +102,7 @@ export function computeStats(events: EventRow[]): SessionStats {
     medianGapSeconds,
     firstEventAt: times.length ? new Date(times[0]).toISOString() : null,
     lastEventAt: times.length ? new Date(times[times.length - 1]).toISOString() : null,
+    quiz,
   };
 }
 
@@ -85,5 +118,11 @@ export function statsToText(stats: SessionStats, label: string): string {
     `- median gap between interactions: ${stats.medianGapSeconds ?? "n/a"}s`,
     `- span: ${stats.firstEventAt ?? "n/a"} to ${stats.lastEventAt ?? "n/a"}`,
   ];
+  if (stats.quiz) {
+    lines.push(
+      `- quiz: ${stats.quiz.total} words — said ${stats.quiz.saidCorrect}/${stats.quiz.saidTotal}, ` +
+        `pointed ${stats.quiz.pointedCorrect}/${stats.quiz.pointedTotal}, skipped ${stats.quiz.skipped}`,
+    );
+  }
   return lines.join("\n");
 }

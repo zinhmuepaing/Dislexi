@@ -34,7 +34,7 @@ export async function POST(req: NextRequest) {
 
   const { data: events, error: eventsError } = await db
     .from("events")
-    .select("ts, type, word, grapheme, question_ref")
+    .select("ts, type, word, grapheme, question_ref, payload")
     .eq("session_id", sessionId)
     .order("ts", { ascending: true });
   if (eventsError) {
