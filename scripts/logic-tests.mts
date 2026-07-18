@@ -15,7 +15,7 @@ import {
 import { chunksFor, chunkPattern, normalizeWord } from "../lib/graphemes";
 import { computeStats } from "../lib/analytics";
 import { parseSteps } from "../lib/tutor-model";
-import { buildSentences, blockToSentenceMap, localWordAt } from "../lib/sentences";
+import { buildSentences, buildParagraphs, blockToSentenceMap, localWordAt } from "../lib/sentences";
 import { fastParseCommand } from "../lib/voice-commands";
 
 const box = (l: number, t: number, r: number, b: number): [number, number][] => [
@@ -62,6 +62,9 @@ const box = (l: number, t: number, r: number, b: number): [number, number][] => 
   assert.equal(selectWordAt({ x: 60, y: 150 }, lines), line2);
   // Between the lines, nearer line2's edge → line2.
   assert.equal(selectWordAt({ x: 200, y: 136 }, lines), line2);
+  // Occlusion prior: equidistant between the lines → the box ABOVE wins
+  // (the finger covers what sits under the tip).
+  assert.equal(selectWordAt({ x: 200, y: 130 }, lines), line1);
   // Far below everything (> 3 line heights = 60px from line2) → null.
   assert.equal(selectWordAt({ x: 200, y: 260 }, lines), null);
   assert.equal(selectWordAt({ x: 200, y: 110 }, []), null);
@@ -246,6 +249,29 @@ const box = (l: number, t: number, r: number, b: number): [number, number][] => 
   assert.equal(emptyMap[0], 0);
   assert.equal(emptyMap[1], undefined); // dropped empty line maps to nothing
   assert.equal(emptyMap[2], 1);
+}
+
+// ── buildParagraphs: sentences merge while gaps stay small (verbatim join) ───
+{
+  const lines: OcrBox[] = [
+    { text: "Electrical System Design for Buildings", box: box(50, 0, 450, 20) },
+    { text: "What is the typical shape and structure of a", box: box(50, 60, 450, 80) },
+    { text: "trunking system?", box: box(50, 82, 250, 102) },
+    { text: "It is usually square or rectangular in shape and has one", box: box(50, 104, 450, 124) },
+    { text: "removable side for easy access to the cables.", box: box(50, 126, 450, 146) },
+  ];
+  const paragraphs = buildParagraphs(lines);
+  // Title split from the body by the 40px gap (> 1.1 × 20px line height);
+  // question + answer sentences merge (tight 2px gaps).
+  assert.equal(paragraphs.length, 2);
+  assert.equal(paragraphs[0].text, "Electrical System Design for Buildings");
+  assert.equal(
+    paragraphs[1].text,
+    "What is the typical shape and structure of a trunking system? It is usually square or rectangular in shape and has one removable side for easy access to the cables.",
+  );
+  assert.deepEqual(paragraphs[1].blockIndices, [1, 2, 3, 4]);
+  // Ranges stay index-aligned to blocks so karaoke can hop lines.
+  assert.equal(paragraphs[1].ranges.length, 4);
 }
 
 // ── fastParseCommand: keyword fast-path before any LLM (amended rule 3) ──────

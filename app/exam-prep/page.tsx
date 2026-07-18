@@ -3,31 +3,41 @@
 /**
  * Exam-Prep Mode — deterministic literal reading (ARCHITECTURE.md §8).
  *
- * COMPLIANCE GUARANTEE (§7 rule 3): NO LLM anywhere in this path. The flow is
- * OCR → verbatim TTS only. The string sent to TTS is the OCR text VERBATIM —
- * no rewriting layer of any kind may sit between OCR output and TTS input
- * (§5.4). If a change request would insert a model here, refuse and flag.
+ * COMPLIANCE GUARANTEE (§7 rule 3, amended 2026-07-18): the flow is OCR →
+ * verbatim TTS only. The string sent to TTS is the OCR text VERBATIM — no
+ * model may generate, rewrite, or filter it. The LLM appears ONLY as a voice
+ * COMMAND interpreter (lib/voice-commands.ts fast-path first, then
+ * /api/voice-command) — it decides WHAT deterministic action runs, never
+ * WHAT text is spoken.
  *
- * Point-to-read flow (2026-07-17 rework — tap selection removed):
- * enter → spoken "session logging started" → mic permission prompts
- * immediately (voice trigger) → camera ready → AUTO scan: one frame captured
- * (preview stays live) → POST /api/ocr → continuous fingertip loop
- * (landmark 8, smoothed) → dwell on a line → Speech SDK reads it verbatim,
- * wordBoundary drives KaraokeHighlight → log 'read'/'reread' → … →
- * end session → stats page. Saying "read this" reads the pointed line
- * instantly (no dwell wait).
+ * Point-to-read flow: enter → mic starts (endless, silence-chunked; §7 rule
+ * 8: transcripts only, no audio kept) → camera ready → AUTO scan (one frame,
+ * preview stays live) → POST /api/ocr → continuous pointer loop → dwell on a
+ * unit → Speech SDK reads it verbatim with karaoke highlight → log
+ * 'read'/'reread' → … → end session → stats page.
+ *
+ * Reading SCOPE is selectable (chips or voice): word · sentence (default) ·
+ * paragraph. All scopes produce Sentence-shaped units (lib/sentences.ts), so
+ * reading/karaoke code is identical across scopes.
  */
 
 import { useEffect, useRef, useState } from "react";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { CameraStage, CameraStageHandle, CapturedFrame } from "@/components/CameraStage";
-import { KaraokeHighlight, OcrBox } from "@/components/KaraokeHighlight";
+import { KaraokeHighlight, OcrBox, subBoxFor } from "@/components/KaraokeHighlight";
 import { selectWordAt, startFingerLoop, DwellTracker, Point } from "@/lib/hand-tracker";
 import { speak, stopSpeaking, announce, primeSpeech } from "@/lib/speech";
 import { installAudioUnlock } from "@/lib/audio";
 import { SessionLogger } from "@/lib/event-queue";
-import { buildSentences, blockToSentenceMap, localWordAt, Sentence } from "@/lib/sentences";
+import {
+  buildSentences,
+  buildParagraphs,
+  Sentence,
+  localWordAt,
+} from "@/lib/sentences";
+import { resolveVoiceCommand, ReadScope } from "@/lib/voice-commands";
+import { startVoiceListener, VoiceListener } from "@/lib/stt";
 
 interface OcrResponse {
   blocks: { text: string; confidence: number; box: [number, number][] }[];
@@ -36,26 +46,74 @@ interface OcrResponse {
 interface Scan {
   frame: CapturedFrame;
   blocks: OcrBox[];
-  /** Line-blocks grouped into sentences — the unit that gets read aloud. */
-  sentences: Sentence[];
-  /** blockSentence[blockIndex] = sentence index the line belongs to. */
-  blockSentence: number[];
 }
 
-// Web Speech API (trigger keyword match only — nothing recorded, §7 rule 8).
-interface SpeechRecognitionLike {
-  continuous: boolean;
-  interimResults: boolean;
-  lang: string;
-  start: () => void;
-  stop: () => void;
-  onresult: ((event: { resultIndex: number; results: { [i: number]: { [j: number]: { transcript: string } }; length: number } }) => void) | null;
-  onstart: (() => void) | null;
-  onend: (() => void) | null;
-  onerror: (() => void) | null;
+/** A pointable box mapped to the reading unit it belongs to. */
+interface Selectable extends OcrBox {
+  unit: number;
+}
+
+interface UnitSet {
+  units: Sentence[];
+  selectables: Selectable[];
 }
 
 const SCAN_SETTLE_MS = 900; // let autoexposure settle before the auto-scan
+const SCOPE_KEY = "dislexi.readScope";
+const SCOPES: { id: ReadScope; label: string }[] = [
+  { id: "word", label: "Word" },
+  { id: "sentence", label: "Sentence" },
+  { id: "paragraph", label: "Paragraph" },
+];
+
+/** Word units: each word of each line becomes its own Sentence-shaped unit. */
+function wordUnits(blocks: OcrBox[]): Sentence[] {
+  const units: Sentence[] = [];
+  blocks.forEach((block, blockIndex) => {
+    const re = /\S+/g;
+    let m: RegExpExecArray | null;
+    while ((m = re.exec(block.text))) {
+      const r = subBoxFor(block, m.index, m[0].length);
+      units.push({
+        blocks: [
+          {
+            text: m[0],
+            box: [
+              [r.x, r.y],
+              [r.x + r.w, r.y],
+              [r.x + r.w, r.y + r.h],
+              [r.x, r.y + r.h],
+            ],
+          },
+        ],
+        blockIndices: [blockIndex],
+        text: m[0],
+        ranges: [{ start: 0, end: m[0].length }],
+      });
+    }
+  });
+  return units;
+}
+
+function computeUnits(blocks: OcrBox[], scope: ReadScope): UnitSet {
+  if (scope === "word") {
+    const units = wordUnits(blocks);
+    return {
+      units,
+      selectables: units.map((u, i) => ({ text: u.text, box: u.blocks[0].box, unit: i })),
+    };
+  }
+  const units = scope === "sentence" ? buildSentences(blocks) : buildParagraphs(blocks);
+  const unitOfBlock: number[] = [];
+  units.forEach((u, ui) => u.blockIndices.forEach((bi) => (unitOfBlock[bi] = ui)));
+  const selectables: Selectable[] = [];
+  blocks.forEach((b, bi) => {
+    if (unitOfBlock[bi] !== undefined) {
+      selectables.push({ text: b.text, box: b.box, unit: unitOfBlock[bi] });
+    }
+  });
+  return { units, selectables };
+}
 
 export default function ExamPrepPage() {
   const router = useRouter();
@@ -63,14 +121,22 @@ export default function ExamPrepPage() {
   const logger = useRef<SessionLogger | null>(null);
   const spokenTexts = useRef<Set<string>>(new Set());
   const busyRef = useRef(false);
+  const readGen = useRef(0);
   const scanRef = useRef<Scan | null>(null);
+  const unitsRef = useRef<UnitSet>({ units: [], selectables: [] });
+  const scopeRef = useRef<ReadScope>("sentence");
   const scanningRef = useRef(false);
   const hoverRef = useRef<number | null>(null);
+  const lastTipRef = useRef<Point | null>(null);
+  const lastReadRef = useRef<Sentence | null>(null);
   const dwellRef = useRef<DwellTracker>(new DwellTracker(300, 250, 500));
   const stopLoopRef = useRef<(() => void) | null>(null);
+  const listenerRef = useRef<VoiceListener | null>(null);
   const autoScanTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
 
   const [scan, setScan] = useState<Scan | null>(null);
+  const [scope, setScope] = useState<ReadScope>("sentence");
+  const [selectables, setSelectables] = useState<Selectable[]>([]);
   const [tip, setTip] = useState<Point | null>(null);
   const [hover, setHover] = useState<number | null>(null);
   const [dwellProgress, setDwellProgress] = useState(0);
@@ -84,6 +150,32 @@ export default function ExamPrepPage() {
     stopLoopRef.current = null;
   }
 
+  function rebuildUnits() {
+    const current = scanRef.current;
+    if (!current) return;
+    const set = computeUnits(current.blocks, scopeRef.current);
+    unitsRef.current = set;
+    setSelectables(set.selectables);
+    dwellRef.current = new DwellTracker(300, 250, 500);
+    hoverRef.current = null;
+    setHover(null);
+    setDwellProgress(0);
+  }
+
+  function applyScope(next: ReadScope) {
+    scopeRef.current = next;
+    setScope(next);
+    try {
+      localStorage.setItem(SCOPE_KEY, next);
+    } catch {
+      /* private mode */
+    }
+    rebuildUnits();
+    if (scanRef.current) {
+      setStatus(`Reading by ${next} — point and hold still.`);
+    }
+  }
+
   function startLoop() {
     stopLoop();
     dwellRef.current = new DwellTracker(300, 250, 500);
@@ -91,27 +183,21 @@ export default function ExamPrepPage() {
       getCanvas: () => stage.current?.getCanvas() ?? null,
       onSample: (sample) => {
         setTip(sample);
+        lastTipRef.current = sample;
         const current = scanRef.current;
         if (!current) return;
         if (busyRef.current) {
-          // Reading in progress: show the pointer, pause dwell triggering.
           setHover(null);
           setDwellProgress(0);
           return;
         }
-        // Point at a line, but dwell on (and read) the whole SENTENCE it
-        // belongs to — the key is the sentence index, so tracking across a
-        // wrapped line never resets the dwell clock.
         let key: string | null = null;
         if (sample) {
-          const block = selectWordAt(
+          const sel = selectWordAt(
             { x: sample.x * current.frame.width, y: sample.y * current.frame.height },
-            current.blocks,
+            unitsRef.current.selectables,
           );
-          if (block) {
-            const si = current.blockSentence[current.blocks.indexOf(block)];
-            if (si !== undefined) key = String(si);
-          }
+          if (sel) key = String(sel.unit);
         }
         const res = dwellRef.current.update(key, performance.now());
         const hoverIdx = res.hover === null ? null : Number(res.hover);
@@ -119,8 +205,8 @@ export default function ExamPrepPage() {
         setHover(hoverIdx);
         setDwellProgress(res.progress);
         if (res.fired !== null) {
-          const sentence = current.sentences[Number(res.fired)];
-          if (sentence) void readSentence(sentence);
+          const unit = unitsRef.current.units[Number(res.fired)];
+          if (unit) void readUnit(unit);
         }
       },
     });
@@ -133,7 +219,9 @@ export default function ExamPrepPage() {
     stopSpeaking();
     busyRef.current = false;
     scanRef.current = null;
+    unitsRef.current = { units: [], selectables: [] };
     setScan(null);
+    setSelectables([]);
     setSelected(null);
     setHover(null);
     setDwellProgress(0);
@@ -157,16 +245,10 @@ export default function ExamPrepPage() {
         setStatus("No text found — lay the worksheet flat and tap Rescan.");
         return;
       }
-      const sentences = buildSentences(blocks);
-      const next: Scan = {
-        frame: captured,
-        blocks,
-        sentences,
-        blockSentence: blockToSentenceMap(sentences),
-      };
-      scanRef.current = next;
-      setScan(next);
-      setStatus("Point at a line and hold still — it will be read aloud.");
+      scanRef.current = { frame: captured, blocks };
+      setScan(scanRef.current);
+      rebuildUnits();
+      setStatus(`Reading by ${scopeRef.current} — point and hold still.`);
       startLoop();
     } catch (err) {
       console.error(err);
@@ -183,102 +265,147 @@ export default function ExamPrepPage() {
     }, SCAN_SETTLE_MS);
   }
 
-  async function readSentence(sentence: Sentence) {
-    if (busyRef.current) return;
+  async function readUnit(unit: Sentence, force = false) {
+    if (busyRef.current && !force) return;
+    if (force) stopSpeaking();
+    const gen = ++readGen.current;
     busyRef.current = true;
-    setSelected(sentence.blocks[0] ?? null);
+    lastReadRef.current = unit;
+    setSelected(unit.blocks[0] ?? null);
     setActiveChar({ start: 0, len: 0 });
-    const reread = spokenTexts.current.has(sentence.text);
-    spokenTexts.current.add(sentence.text);
-    logger.current?.log({ type: reread ? "reread" : "read", word: sentence.text });
-    setStatus(`Reading: “${sentence.text}”`);
+    const reread = spokenTexts.current.has(unit.text);
+    spokenTexts.current.add(unit.text);
+    logger.current?.log({ type: reread ? "reread" : "read", word: unit.text });
+    setStatus(`Reading: “${unit.text.length > 80 ? `${unit.text.slice(0, 77)}…` : unit.text}”`);
 
     try {
-      // VERBATIM: the sentence text is the member lines' OCR text concatenated
-      // untouched — no rewriting layer between OCR and TTS (§5.4). The word
-      // boundary offset is mapped back to the line it falls in so the highlight
-      // hops from one line's box to the next as the sentence is read.
-      await speak(sentence.text, {
+      // VERBATIM: unit.text is the member lines' OCR text concatenated
+      // untouched — no rewriting layer between OCR and TTS (§5.4, rule 3).
+      await speak(unit.text, {
         onWordBoundary: (start, len) => {
-          const w = localWordAt(sentence, start, len);
+          if (readGen.current !== gen) return;
+          const w = localWordAt(unit, start, len);
           if (!w) return;
-          setSelected(sentence.blocks[w.memberIndex]);
+          setSelected(unit.blocks[w.memberIndex]);
           setActiveChar({ start: w.localStart, len: w.localLength });
         },
       });
-      setStatus("Point at a line and hold still — it will be read aloud.");
+      if (readGen.current === gen) {
+        setStatus(`Reading by ${scopeRef.current} — point and hold still.`);
+      }
     } catch (err) {
       console.error("TTS failed:", err);
-      setStatus("Speech failed — check the connection and point again.");
+      if (readGen.current === gen) setStatus("Speech failed — check the connection and point again.");
     }
-    setSelected(null);
-    setActiveChar({ start: 0, len: 0 });
-    busyRef.current = false;
+    if (readGen.current === gen) {
+      setSelected(null);
+      setActiveChar({ start: 0, len: 0 });
+      busyRef.current = false;
+    }
   }
 
-  /** Voice trigger / button: read the pointed sentence immediately (no dwell). */
-  function readPointedNow() {
+  /** Read whatever the finger points at RIGHT NOW (voice command / no dwell). */
+  function readPointed(scopeOverride?: ReadScope) {
     const current = scanRef.current;
-    if (!current || busyRef.current) return;
-    const idx = hoverRef.current;
-    if (idx === null || !current.sentences[idx]) {
-      setStatus("Point your finger at a line first.");
+    if (!current) return;
+    if (scopeOverride && scopeOverride !== scopeRef.current) applyScope(scopeOverride);
+    const tipNow = lastTipRef.current;
+    if (!tipNow) {
+      setStatus("Point your finger at the page first.");
       return;
     }
-    void readSentence(current.sentences[idx]);
+    const sel = selectWordAt(
+      { x: tipNow.x * current.frame.width, y: tipNow.y * current.frame.height },
+      unitsRef.current.selectables,
+    );
+    const unit = sel ? unitsRef.current.units[sel.unit] : null;
+    if (!unit) {
+      setStatus("Point at the text and try again.");
+      return;
+    }
+    void readUnit(unit, true);
+  }
+
+  /** Voice command dispatch (intent only — amended rule 3). */
+  async function handleUtterance(text: string) {
+    const cmd = await resolveVoiceCommand(text);
+    // While TTS is playing, the mic hears the app's own voice — only an
+    // explicit "stop" gets through, everything else is ignored.
+    if (busyRef.current && cmd.intent !== "stop") return;
+    switch (cmd.intent) {
+      case "read":
+        readPointed(cmd.scope);
+        break;
+      case "set_scope":
+        if (cmd.scope) {
+          applyScope(cmd.scope);
+          announce(`Reading by ${cmd.scope}.`);
+        }
+        break;
+      case "repeat": {
+        const last = lastReadRef.current;
+        if (last) void readUnit(last, true);
+        break;
+      }
+      case "stop":
+        stopSpeaking();
+        break;
+      case "rescan":
+        void rescan();
+        break;
+      default:
+        break; // none / stuck_word: not an exam-prep action
+    }
+  }
+
+  async function toggleMic() {
+    if (listenerRef.current) {
+      listenerRef.current.stop();
+      listenerRef.current = null;
+      setListening(false);
+      return;
+    }
+    try {
+      listenerRef.current = await startVoiceListener({
+        onUtterance: (t) => void handleUtterance(t),
+        onState: setListening,
+      });
+    } catch {
+      setListening(false);
+      setStatus("Mic unavailable — pointing still works.");
+    }
   }
 
   useEffect(() => {
     announce("Session logging started."); // mode entry announced aloud (§7 rule 6)
     installAudioUnlock();
     primeSpeech();
+    // Restore the persisted scope AFTER hydration (deferred: no sync setState
+    // in the effect body, and the server-rendered default stays consistent).
+    const scopeRestore = setTimeout(() => {
+      try {
+        const stored = localStorage.getItem(SCOPE_KEY) as ReadScope | null;
+        if (stored === "word" || stored === "paragraph") {
+          scopeRef.current = stored;
+          setScope(stored);
+        }
+      } catch {
+        /* private mode */
+      }
+    }, 0);
     SessionLogger.start("exam_prep").then((l) => {
       logger.current = l;
       if (!l.enabled) setStatus((s) => `${s} (logging unavailable)`);
     });
-
-    // Voice trigger: plain keyword match, no LLM, nothing recorded (§7 rule 8).
-    // Starting recognition here prompts for the microphone immediately.
-    const Ctor = (window as unknown as { webkitSpeechRecognition?: new () => SpeechRecognitionLike })
-      .webkitSpeechRecognition;
-    let recognition: SpeechRecognitionLike | null = null;
-    let stopped = false;
-    if (Ctor) {
-      recognition = new Ctor();
-      recognition.continuous = true;
-      recognition.interimResults = true;
-      recognition.lang = "en-SG";
-      recognition.onresult = (event) => {
-        // Only scan new results — old ones stay in the list in continuous mode.
-        for (let i = event.resultIndex; i < event.results.length; i++) {
-          if (/read this/i.test(event.results[i][0]?.transcript ?? "")) {
-            readPointedNow();
-            break;
-          }
-        }
-      };
-      recognition.onstart = () => setListening(true);
-      // Safari/iOS STT is inconsistent (§9.5) — pointing alone still works.
-      recognition.onerror = () => setListening(false);
-      recognition.onend = () => {
-        if (!stopped) {
-          try {
-            recognition!.start(); // keep listening across auto-stops
-          } catch {
-            setListening(false);
-          }
-        }
-      };
-      try {
-        recognition.start();
-      } catch {
-        // start() failed (no permission / unsupported) — pointing still works.
-      }
-    }
+    // Endless mic starts on entry (prompts for permission immediately);
+    // the chip toggles it off/on. Transcripts only — no audio kept (rule 8).
+    const micStart = setTimeout(() => void toggleMic(), 0);
 
     return () => {
-      stopped = true;
-      recognition?.stop();
+      clearTimeout(scopeRestore);
+      clearTimeout(micStart);
+      listenerRef.current?.stop();
+      listenerRef.current = null;
       stopLoop();
       stopSpeaking();
       if (autoScanTimer.current) clearTimeout(autoScanTimer.current);
@@ -287,6 +414,8 @@ export default function ExamPrepPage() {
   }, []);
 
   async function endSession() {
+    listenerRef.current?.stop();
+    listenerRef.current = null;
     stopLoop();
     stopSpeaking();
     const l = logger.current;
@@ -301,6 +430,11 @@ export default function ExamPrepPage() {
 
   const frameW = scan?.frame.width ?? 1;
   const frameH = scan?.frame.height ?? 1;
+  // Last selectable of the hovered unit carries the dwell progress bar.
+  const lastOfHover =
+    hover === null
+      ? -1
+      : selectables.reduce((acc, s, i) => (s.unit === hover ? i : acc), -1);
 
   return (
     // h-dvh + capped camera: every control fits the phone viewport, no scroll.
@@ -310,7 +444,7 @@ export default function ExamPrepPage() {
           ←
         </Link>
         <h1 className="font-display text-lg font-extrabold">Exam-Prep Mode</h1>
-        <span className="stamp stamp-det">No AI in this path</span>
+        <span className="stamp stamp-det">Reads verbatim — no AI voice</span>
       </header>
 
       <CameraStage
@@ -320,25 +454,21 @@ export default function ExamPrepPage() {
         onSourceChange={() => {
           scanRef.current = null;
           setScan(null);
+          setSelectables([]);
           stopLoop();
           scheduleAutoScan();
         }}
       >
-        {/* Line outlines — aim guides (walkthrough "box" visual). Hover lights
-            every line of the pointed SENTENCE; the dwell bar sits under its
-            last line. */}
+        {/* Pointable outlines; hover lights every box of the pointed unit. */}
         {scan &&
-          scan.blocks.map((b, i) => {
-            const xs = b.box.map(([x]) => x);
-            const ys = b.box.map(([, y]) => y);
+          selectables.map((s, i) => {
+            const xs = s.box.map(([x]) => x);
+            const ys = s.box.map(([, y]) => y);
             const left = Math.min(...xs);
             const top = Math.min(...ys);
             const w = Math.max(...xs) - left;
             const h = Math.max(...ys) - top;
-            const isHover = hover !== null && scan.blockSentence[i] === hover;
-            const sentence = hover !== null ? scan.sentences[hover] : undefined;
-            const isLastOfHover =
-              isHover && sentence !== undefined && sentence.blockIndices[sentence.blockIndices.length - 1] === i;
+            const isHover = hover !== null && s.unit === hover;
             return (
               <div
                 key={i}
@@ -354,7 +484,7 @@ export default function ExamPrepPage() {
                   height: `${(h / frameH) * 100}%`,
                 }}
               >
-                {isLastOfHover && dwellProgress > 0 && (
+                {i === lastOfHover && dwellProgress > 0 && (
                   <div
                     className="absolute -bottom-1 left-0 h-[3px] rounded bg-[var(--hl-strong)]"
                     style={{ width: `${dwellProgress * 100}%` }}
@@ -375,7 +505,7 @@ export default function ExamPrepPage() {
           />
         )}
 
-        {/* Fingertip pointer. */}
+        {/* Pointed-spot dot (the exact point that selects). */}
         {tip && (
           <div
             className="absolute h-3.5 w-3.5 -translate-x-1/2 -translate-y-1/2 rounded-full border-2 border-white bg-[var(--pen)] shadow"
@@ -383,6 +513,29 @@ export default function ExamPrepPage() {
           />
         )}
       </CameraStage>
+
+      {/* Reading scope + mic */}
+      <div className="flex flex-wrap items-center gap-1.5">
+        {SCOPES.map((s) => (
+          <button
+            key={s.id}
+            onClick={() => applyScope(s.id)}
+            className={`chip !py-1 !text-[12px] ${
+              scope === s.id ? "!bg-[var(--hl)] font-semibold" : "!bg-white"
+            }`}
+            aria-pressed={scope === s.id}
+          >
+            {s.label}
+          </button>
+        ))}
+        <button
+          onClick={() => void toggleMic()}
+          className={`chip ml-auto !py-1 !text-[12px] ${listening ? "chip-mic" : "chip-off"}`}
+          aria-pressed={listening}
+        >
+          {listening ? "mic on" : "mic off"}
+        </button>
+      </div>
 
       <div className="flex gap-2">
         <button onClick={() => void rescan()} className="btn btn-hl flex-1 !py-2.5 text-base">
@@ -393,14 +546,11 @@ export default function ExamPrepPage() {
         </button>
       </div>
 
-      <div className="card flex min-h-0 flex-col gap-1.5 overflow-y-auto p-2.5">
+      <div className="card flex min-h-0 flex-col gap-1 overflow-y-auto p-2.5">
         <p className="text-sm leading-snug text-[var(--ink)]">{status}</p>
-        <div className="flex flex-wrap items-center gap-1.5">
-          <span className={`chip !py-1 !text-[11px] ${listening ? "chip-mic" : "chip-off"}`}>
-            {listening ? "listening for “read this”" : "voice trigger off"}
-          </span>
-          <span className="mono-hint">point at a line · hold still to hear it</span>
-        </div>
+        <p className="mono-hint">
+          point just under the {scope} · hold still to hear it · or say “read this {scope}”
+        </p>
       </div>
     </main>
   );

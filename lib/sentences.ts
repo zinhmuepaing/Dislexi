@@ -107,6 +107,46 @@ export function buildSentences(blocks: OcrBox[]): Sentence[] {
   return sentences;
 }
 
+/** Vertical gap beyond this fraction of the line height separates paragraphs. */
+const PARA_GAP_FACTOR = 1.1;
+
+/**
+ * Group sentences into PARAGRAPHS (Exam-Prep "paragraph" reading scope):
+ * consecutive sentences merge while the vertical gap between them stays
+ * small and the flow is downward. Same deterministic, verbatim-join rules
+ * as buildSentences — the result is Sentence-shaped, so reading/karaoke
+ * code treats every scope identically.
+ */
+export function buildParagraphs(blocks: OcrBox[]): Sentence[] {
+  const sentences = buildSentences(blocks);
+  const paragraphs: Sentence[] = [];
+  let run: Sentence[] = [];
+
+  const flush = () => {
+    if (run.length === 0) return;
+    const members = run.flatMap((s) =>
+      s.blocks.map((block, k) => ({ block, index: s.blockIndices[k] })),
+    );
+    paragraphs.push(makeSentence(members));
+    run = [];
+  };
+
+  for (const sentence of sentences) {
+    if (run.length > 0) {
+      const prev = run[run.length - 1];
+      const a = rectOf(prev.blocks[prev.blocks.length - 1].box);
+      const b = rectOf(sentence.blocks[0].box);
+      const sameLineOrBelow = b.top >= a.top;
+      const gap = b.top - a.bottom;
+      if (!sameLineOrBelow || gap > PARA_GAP_FACTOR * a.height) flush();
+    }
+    run.push(sentence);
+  }
+  flush();
+
+  return paragraphs;
+}
+
 /** blockToSentence[blockIndex] = sentence index (undefined for dropped empties). */
 export function blockToSentenceMap(sentences: Sentence[]): number[] {
   const map: number[] = [];

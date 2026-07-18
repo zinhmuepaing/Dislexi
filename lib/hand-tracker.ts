@@ -253,10 +253,16 @@ function rectOf(box: [number, number][]): Rect {
  * Improvements over nearest-center (which misfires on long line boxes):
  *  - containment first: a box the point falls inside always wins;
  *  - otherwise clamped point-to-rect distance with vertical error weighted
- *    heavier (lines are wide, so x-distance is a weak signal);
+ *    heavier (lines are wide, so x-distance is a weak signal) and
+ *    ASYMMETRICALLY: a candidate ABOVE the pointer is cheap, one BELOW is
+ *    expensive — the finger/nail occludes what sits under the tip, so when
+ *    tracking drops out mid-word the intended target is the box above;
  *  - reject when nothing is within ~3 line heights (pointing at margin).
  * Ties → topmost, as before (§7 rule 5).
  */
+const Y_WEIGHT_ABOVE = 1.2; // candidate box above the pointer
+const Y_WEIGHT_BELOW = 2.6; // candidate box below the pointer (likely occluded)
+
 export function selectWordAt<T extends OcrBox>(point: Point, blocks: T[]): T | null {
   if (blocks.length === 0) return null;
   const rects = blocks.map((b) => rectOf(b.box));
@@ -285,13 +291,16 @@ export function selectWordAt<T extends OcrBox>(point: Point, blocks: T[]): T | n
   });
   if (best) return best;
 
-  // Pass 2 — nearest by clamped point-to-rect distance, vertical weighted.
+  // Pass 2 — nearest by clamped point-to-rect distance, vertical weighted
+  // asymmetrically (above cheap, below expensive — occlusion prior).
   bestDist = Infinity;
   bestY = Infinity;
   rects.forEach((r, i) => {
     const dx = Math.max(r.left - p.x, 0, p.x - r.right);
-    const dy = Math.max(r.top - p.y, 0, p.y - r.bottom);
-    const dist = Math.hypot(dx, dy * yWeight);
+    const above = p.y - r.bottom; // >0 → box is above the pointer
+    const below = r.top - p.y; // >0 → box is below the pointer
+    const dy = above > 0 ? above * Y_WEIGHT_ABOVE : below > 0 ? below * Y_WEIGHT_BELOW : 0;
+    const dist = Math.hypot(dx, dy);
     const cy = (r.top + r.bottom) / 2;
     if (dist < bestDist - 1e-6 || (Math.abs(dist - bestDist) <= 1e-6 && cy < bestY)) {
       best = blocks[i];
