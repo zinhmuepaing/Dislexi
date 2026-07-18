@@ -49,25 +49,25 @@ export default function ModeSelector() {
   }, []);
 
   return (
-    <main className="mx-auto flex w-full max-w-md flex-1 flex-col gap-5 p-5 pb-10">
-      <header className="pt-6">
-        <p className="eyebrow mb-3">Tech4City 2026 · Assistive Reading</p>
-        <h1 className="font-display text-[34px] font-extrabold leading-[1.1] tracking-tight">
+    <main className="mx-auto flex min-h-dvh w-full max-w-md flex-col gap-2.5 p-4 pb-4">
+      <header className="pt-2">
+        <p className="eyebrow mb-1.5">Tech4City 2026 · Assistive Reading</p>
+        <h1 className="font-display text-2xl font-extrabold leading-[1.12] tracking-tight">
           Homework help that <span className="swipe">reads the rules</span>, then teaches the
           word.
         </h1>
-        <p className="mt-3 text-[15px] text-[var(--ink-soft)]">
-          Put the phone in its stand so the camera sees the worksheet, then pick a feature.
-          The reading voice follows the exact words on the page — <b className="text-[var(--ink)]">nothing added, nothing changed</b>.
+        <p className="mt-1.5 text-[13px] leading-snug text-[var(--ink-soft)]">
+          Stand the phone so the camera sees the worksheet, then pick a feature —{" "}
+          <b className="text-[var(--ink)]">nothing added, nothing changed</b>.
         </p>
       </header>
 
       {/* Live karaoke demo — the product's signature interaction. */}
-      <div className="card p-4" aria-hidden>
-        <span className="mono-hint mb-2 block uppercase tracking-[0.1em]">
+      <div className="card px-3 py-2" aria-hidden>
+        <span className="mono-hint mb-1 block uppercase tracking-[0.1em]">
           Live highlight, synced to the voice
         </span>
-        <p className="text-[17px] font-medium leading-relaxed">
+        <p className="text-[15px] font-medium leading-relaxed">
           {KARAOKE_WORDS.map((w, i) => (
             <span key={i}>
               <span
@@ -87,40 +87,31 @@ export default function ModeSelector() {
           <Link
             key={f.href}
             href={f.href}
-            className="card group p-4 transition-transform duration-150 hover:-translate-x-px hover:-translate-y-px hover:shadow-[6px_6px_0_rgba(34,48,63,0.16)] active:translate-x-px active:translate-y-px active:shadow-[2px_2px_0_rgba(34,48,63,0.12)]"
+            className="card group p-3 transition-transform duration-150 hover:-translate-x-px hover:-translate-y-px hover:shadow-[6px_6px_0_rgba(34,48,63,0.16)] active:translate-x-px active:translate-y-px active:shadow-[2px_2px_0_rgba(34,48,63,0.12)]"
           >
             <div className="flex items-baseline gap-2.5">
               <span className="mono-hint !text-[var(--pen)]">{f.n}</span>
-              <h2 className="font-display text-lg font-extrabold">{f.title}</h2>
+              <h2 className="font-display text-[17px] font-extrabold">{f.title}</h2>
               <span className="ml-auto text-lg text-[var(--pen)] transition-transform duration-150 group-hover:translate-x-0.5">
                 →
               </span>
             </div>
-            <p className="mt-1 text-sm text-[var(--ink-soft)]">{f.tag}</p>
-            <div className="mt-2.5 flex flex-wrap items-center gap-2">
+            <p className="mt-0.5 text-[13px] text-[var(--ink-soft)]">{f.tag}</p>
+            <div className="mt-1.5 flex flex-wrap items-center gap-2">
               <span className={`stamp ${f.stamp.cls}`}>{f.stamp.label}</span>
-              <span className="mono-hint">{f.hint}</span>
             </div>
           </Link>
         ))}
       </nav>
 
-      <div className="card p-4">
-        <span className="mono-hint mb-2 block uppercase tracking-[0.1em]">The setup</span>
-        <div className="flex flex-wrap gap-2">
-          <span className="chip">📱 phone in a stand</span>
-          <span className="chip">📄 worksheet in front</span>
-          <span className="chip">👉 point with a finger</span>
-          <span className="chip">🪞 mirror clip? toggle it in-app</span>
-        </div>
-        <p className="mono-hint mt-3">
-          front or rear camera — switch anytime from the camera view
-        </p>
+      <div className="flex flex-wrap gap-1.5">
+        <span className="chip !py-1 !text-[11px]">📱 phone in a stand</span>
+        <span className="chip !py-1 !text-[11px]">📄 worksheet in front</span>
+        <span className="chip !py-1 !text-[11px]">👉 point with a finger</span>
       </div>
 
-      <footer className="mt-2 flex flex-wrap justify-between gap-2 border-t-[1.5px] border-[var(--ink)] pt-3">
+      <footer className="mt-auto flex flex-wrap justify-between gap-2 border-t-[1.5px] border-[var(--ink)] pt-2">
         <span className="mono-hint">3 features · 1 phone · 0 extra computers</span>
-        <span className="mono-hint">no AI in the exam-reading path — by architecture</span>
       </footer>
     </main>
   );

@@ -217,13 +217,18 @@ export const CameraStage = forwardRef<CameraStageHandle, CameraStageProps>(
     }));
 
     return (
-      <div className="relative w-full overflow-hidden rounded-xl border-[1.5px] border-[var(--ink)] bg-[var(--ink)]">
-        {/* Hidden raw video — never shown or processed directly. */}
-        <video ref={videoRef} playsInline muted className="hidden" />
-        {/* The canvas everything sees (step 0 applied when mirror is on). */}
-        <canvas ref={canvasRef} className="w-full" />
-        {/* Overlay layer (highlights, regions) in canvas-frame space. */}
-        <div className="pointer-events-none absolute inset-0">{children}</div>
+      // Height is viewport-capped (~42dvh) so the controls below the camera
+      // are ALWAYS visible without scrolling on phones. The relative wrapper
+      // shrink-wraps the scaled canvas exactly, so %-positioned overlays stay
+      // aligned with canvas-frame coordinates at any display size.
+      <div className="flex w-full justify-center">
+        <div className="relative min-h-[120px] min-w-[240px] w-fit max-w-full overflow-hidden rounded-xl border-[1.5px] border-[var(--ink)] bg-[var(--ink)]">
+          {/* Hidden raw video — never shown or processed directly. */}
+          <video ref={videoRef} playsInline muted className="hidden" />
+          {/* The canvas everything sees (step 0 applied when mirror is on). */}
+          <canvas ref={canvasRef} className="block h-auto max-h-[42dvh] w-auto max-w-full" />
+          {/* Overlay layer (highlights, regions) in canvas-frame space. */}
+          <div className="pointer-events-none absolute inset-0">{children}</div>
 
         {/* Camera controls */}
         <div className="absolute right-2 top-2 flex gap-1.5">
@@ -246,11 +251,12 @@ export const CameraStage = forwardRef<CameraStageHandle, CameraStageProps>(
           </button>
         </div>
 
-        {!ready && (
-          <p className="absolute inset-0 flex items-center justify-center text-sm text-white/80">
-            Starting camera…
-          </p>
-        )}
+          {!ready && (
+            <p className="absolute inset-0 flex items-center justify-center text-sm text-white/80">
+              Starting camera…
+            </p>
+          )}
+        </div>
       </div>
     );
   },

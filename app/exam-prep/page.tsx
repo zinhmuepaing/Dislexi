@@ -303,12 +303,13 @@ export default function ExamPrepPage() {
   const frameH = scan?.frame.height ?? 1;
 
   return (
-    <main className="mx-auto flex w-full max-w-md flex-1 flex-col gap-4 p-4 pt-5">
-      <header className="flex flex-wrap items-center gap-x-3 gap-y-2">
-        <Link href="/" className="btn btn-ghost !px-3 !py-1.5 text-sm" aria-label="Back to features">
+    // h-dvh + capped camera: every control fits the phone viewport, no scroll.
+    <main className="mx-auto flex h-dvh w-full max-w-md flex-col gap-2.5 overflow-y-auto p-3">
+      <header className="flex flex-wrap items-center gap-x-2.5 gap-y-1">
+        <Link href="/" className="btn btn-ghost !px-2.5 !py-1 text-sm" aria-label="Back to features">
           ←
         </Link>
-        <h1 className="font-display text-xl font-extrabold">Exam-Prep Mode</h1>
+        <h1 className="font-display text-lg font-extrabold">Exam-Prep Mode</h1>
         <span className="stamp stamp-det">No AI in this path</span>
       </header>
 
@@ -384,24 +385,22 @@ export default function ExamPrepPage() {
       </CameraStage>
 
       <div className="flex gap-2">
-        <button onClick={() => void rescan()} className="btn btn-hl flex-1 text-base">
+        <button onClick={() => void rescan()} className="btn btn-hl flex-1 !py-2.5 text-base">
           ⟳ Rescan page
         </button>
-        <button onClick={() => void endSession()} className="btn btn-ink flex-1 text-base">
+        <button onClick={() => void endSession()} className="btn btn-ink flex-1 !py-2.5 text-base">
           End session
         </button>
       </div>
 
-      <div className="card flex flex-col gap-2 p-3">
-        <p className="text-sm text-[var(--ink)]">{status}</p>
-        <div className="flex flex-wrap gap-2">
-          <span className={`chip ${listening ? "chip-mic" : "chip-off"}`}>
-            {listening ? "listening for “read this”" : "voice trigger off — point and hold instead"}
+      <div className="card flex min-h-0 flex-col gap-1.5 overflow-y-auto p-2.5">
+        <p className="text-sm leading-snug text-[var(--ink)]">{status}</p>
+        <div className="flex flex-wrap items-center gap-1.5">
+          <span className={`chip !py-1 !text-[11px] ${listening ? "chip-mic" : "chip-off"}`}>
+            {listening ? "listening for “read this”" : "voice trigger off"}
           </span>
+          <span className="mono-hint">point at a line · hold still to hear it</span>
         </div>
-        <p className="mono-hint">
-          point at a line · hold still to hear it · say “read this” to skip the wait
-        </p>
       </div>
     </main>
   );

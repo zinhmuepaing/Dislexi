@@ -203,12 +203,14 @@ export default function TutoringPage() {
   const region = activeStep >= 0 ? steps[activeStep]?.region : null;
 
   return (
-    <main className="mx-auto flex w-full max-w-md flex-1 flex-col gap-4 p-4 pt-5">
-      <header className="flex flex-wrap items-center gap-x-3 gap-y-2">
-        <Link href="/" className="btn btn-ghost !px-3 !py-1.5 text-sm" aria-label="Back to features">
+    // h-dvh + capped camera; the step list scrolls INTERNALLY so the input
+    // row and hints never leave the viewport.
+    <main className="mx-auto flex h-dvh w-full max-w-md flex-col gap-2.5 p-3">
+      <header className="flex flex-wrap items-center gap-x-2.5 gap-y-1">
+        <Link href="/" className="btn btn-ghost !px-2.5 !py-1 text-sm" aria-label="Back to features">
           ←
         </Link>
-        <h1 className="font-display text-xl font-extrabold">AI Tutoring</h1>
+        <h1 className="font-display text-lg font-extrabold">AI Tutoring</h1>
         <span className="stamp stamp-ai">AI explains here — never in Exam-Prep</span>
       </header>
 
@@ -263,7 +265,7 @@ export default function TutoringPage() {
       )}
 
       {steps.length > 0 && !busy && (
-        <ol className="flex flex-col gap-2">
+        <ol className="flex min-h-0 flex-1 flex-col gap-2 overflow-y-auto">
           {steps.map((s, i) => (
             <li key={i} className="fadein">
               <button
@@ -286,7 +288,7 @@ export default function TutoringPage() {
         </ol>
       )}
 
-      <div className="card flex flex-col gap-1 p-3">
+      <div className="card mt-auto flex flex-col gap-1 p-2.5">
         <p className="mono-hint">
           ask by voice or typing · each step glows on the worksheet while it&apos;s explained
         </p>

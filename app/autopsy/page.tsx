@@ -381,12 +381,13 @@ export default function AutopsyPage() {
   const frameH = frame?.height ?? 1;
 
   return (
-    <main className="mx-auto flex w-full max-w-md flex-1 flex-col gap-4 p-4 pt-5">
-      <header className="flex flex-wrap items-center gap-x-3 gap-y-2">
-        <Link href="/" className="btn btn-ghost !px-3 !py-1.5 text-sm" aria-label="Back to features">
+    // h-dvh + capped camera: every control fits the phone viewport, no scroll.
+    <main className="mx-auto flex h-dvh w-full max-w-md flex-col gap-2.5 overflow-y-auto p-3">
+      <header className="flex flex-wrap items-center gap-x-2.5 gap-y-1">
+        <Link href="/" className="btn btn-ghost !px-2.5 !py-1 text-sm" aria-label="Back to features">
           ←
         </Link>
-        <h1 className="font-display text-xl font-extrabold">Stuck-Word Autopsy</h1>
+        <h1 className="font-display text-lg font-extrabold">Stuck-Word Autopsy</h1>
         <span className="stamp stamp-det">Recorded phonemes · zero AI</span>
       </header>
 
@@ -465,27 +466,27 @@ export default function AutopsyPage() {
 
       <div className="flex gap-2">
         {phase === "tracing" ? (
-          <button onClick={skipTrace} className="btn btn-ghost flex-1 text-base">
+          <button onClick={skipTrace} className="btn btn-ghost flex-1 !py-2.5 text-base">
             Skip tracing
           </button>
         ) : (
           <button
             onClick={() => void rescan()}
             disabled={phase === "sounding"}
-            className="btn btn-hl flex-1 text-base"
+            className="btn btn-hl flex-1 !py-2.5 text-base"
           >
             ⟳ Rescan page
           </button>
         )}
-        <button onClick={() => void endSession()} className="btn btn-ink flex-1 text-base">
+        <button onClick={() => void endSession()} className="btn btn-ink flex-1 !py-2.5 text-base">
           End session
         </button>
       </div>
 
-      <div className="card flex flex-col gap-2 p-3">
-        <p className="text-sm text-[var(--ink)]">{status}</p>
+      <div className="card flex min-h-0 flex-col gap-1.5 overflow-y-auto p-2.5">
+        <p className="text-sm leading-snug text-[var(--ink)]">{status}</p>
         <p className="mono-hint">
-          point at a word · hold to hear it · keep pointing to sound it out · then trace it on paper
+          point at a word · hold to hear it · keep pointing to sound it out
         </p>
       </div>
     </main>
