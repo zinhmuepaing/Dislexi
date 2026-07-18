@@ -96,9 +96,9 @@ pages switch which selector they call; nothing is deleted.
 
 Phases (mark as they land):
 
-- [ ] **S0 — Plan + rule-3 amendment #2 in-repo** (this section; ARCHITECTURE
+- [x] **S0 — Plan + rule-3 amendment #2 in-repo** (this section; ARCHITECTURE
   §7 rule 3 + CLAUDE.md). Gate: docs only.
-- [ ] **S1 — CRITICAL: vision-LLM pointing.** New `locatePointer(imageBase64)`
+- [x] **S1 — CRITICAL: vision-LLM pointing.** New `locatePointer(imageBase64)`
   in `lib/tutor-model.ts` (vision model → strict JSON normalized fingertip
   `{x,y}` or `{found:false}`; prompt: "a child points at a worksheet, return
   the tip of the pointing finger") → new `POST /api/point`. Exam-Prep +
@@ -107,36 +107,36 @@ Phases (mark as they land):
   Show a "finding your finger…" state (~1–2 s). Remove the continuous dwell
   loop from the selection path; keep the live MediaPipe pointer only as an
   optional debug dot (off by default). Keep `lib/hand-tracker.ts` for revert.
-- [ ] **S2 — Highlight accuracy (missing first char + trailing blank).** Root
+- [x] **S2 — Highlight accuracy (missing first char + trailing blank).** Root
   cause: `subBoxFor` proportional char-split over the whole line box is
   imprecise for variable-width fonts. Expose Azure **word-level boxes** from
   `lib/ocr.ts` as an optional `words:[{text,box}]` per block; selection +
   highlight use real word boxes when present, proportional fallback
   otherwise (Huawei parity preserved). Contract-additive only.
-- [ ] **S3 — Overlay colour + shape conflict.** New `--point` token
+- [x] **S3 — Overlay colour + shape conflict.** New `--point` token
   `#ec4d25`; recolour camera-overlay blues (pointer dot, tutoring aids,
   selectable outlines) — leave semantic stamps (det/ai/ok) alone. Tutoring:
   suppress an aid whose resolved rect ~coincides (IoU high) with the step
   region so the oval + rectangle never mark the exact same spot.
-- [ ] **S4 — Stray blue horizontal line (right of camera).** Reproduce with a
+- [x] **S4 — Stray blue horizontal line (right of camera).** Reproduce with a
   test frame in the browser; audit overlay rects for degenerate height /
   edge-clipping (likely an OCR line box or leftover). Eliminate the element,
   not just recolour it.
-- [ ] **S5 — Bigger camera view.** Raise the canvas cap (~42dvh → ~54dvh),
+- [x] **S5 — Bigger camera view.** Raise the canvas cap (~42dvh → ~54dvh),
   let width fill; move scope chips / status / buttons down to fill the empty
   bottom band. Keep everything on-screen without scrolling at 375×812.
-- [ ] **S6 — Landing + global modernization.** Remove "Tech4City 2026"; cut
+- [x] **S6 — Landing + global modernization.** Remove "Tech4City 2026"; cut
   Home copy hard (headline + one line + cards only); rebalance so content
   reaches the bottom; add tasteful motion (Lottie/CSS) for a modern-SaaS
   feel while keeping the notebook/paper theme. Apply the fuller-height,
   balanced layout across feature pages.
-- [ ] **S7 — Tutoring on-paper working + text toggle (DeskTutor-style).**
+- [x] **S7 — Tutoring on-paper working + text toggle (DeskTutor-style).**
   Extend the step schema with drawable ANNOTATIONS (text labels /
   equations / marks anchored to lines/phrases) so the model shows the
   working directly on the worksheet (e.g. writes "9/12" above 3/4). Add a
   per-step **text toggle** (button) — narration text hidden by default,
   revealed on click; audio + on-paper visuals always play.
-- [ ] **S8 — Autopsy quiz "point at it" tracking + stuck-highlight bug.**
+- [x] **S8 — Autopsy quiz "point at it" tracking + stuck-highlight bug.**
   Clear the previous word's highlight when the quiz starts; the point-at-it
   step uses the S1 vision-LLM pointer (or button); ensure the preview is
   live (not stuck on a frozen/previous-word frame).

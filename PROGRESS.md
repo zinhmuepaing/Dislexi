@@ -1,5 +1,40 @@
 # PROGRESS.md — Dislexi build session log
 
+## RESUME FROM HERE (2026-07-19, fifth session — REWORK 2 S0–S8 complete)
+
+Second on-device test round. All S-phases landed; build + eslint (0/0) +
+logic-tests green each phase.
+
+- **CRITICAL tracking fix (S1)**: root cause = MediaPipe can't parse the
+  back-of-hand/fingernail view the mirror-clip camera sees. Replaced with
+  **vision-LLM pointing**: `locatePointer()` (adapter) + `POST /api/point` →
+  normalized fingertip; Exam-Prep/Autopsy trigger on voice "read this" /
+  "I'm stuck" or the button → capture → /api/point → nearest OCR word →
+  read/coach. `lib/hand-tracker.ts` kept intact for revert (`selectWordAt`
+  reused; the dwell loop is just not started). Rule 3 amendment #2 recorded.
+  `/api/point` verified: {found:false} on a hand-less frame, ~1.7s.
+- **S2 accuracy**: Azure word-level boxes exposed (`lib/ocr.ts` `words[]`);
+  selection + karaoke use real word boxes via `rectForRange()` → fixes the
+  "highlight drifts one char + trailing blank" bug.
+- **S3/S4**: `--point #ec4d25` overlay colour; degenerate (<3px) overlay
+  boxes skipped (kills the stray thin line); tutoring aid coincident with the
+  step region suppressed (IoU) so oval+rect never overlap.
+- **S5**: camera enlarged (50–56dvh); controls pushed to the bottom.
+- **S6**: landing redesigned — "Tech4City 2026" removed, copy cut, feature
+  cards grow to fill the screen; notebook theme + karaoke + Lottie kept.
+- **S7 (DeskTutor)**: new `write` aid — the model prints the working on the
+  paper ("×3 =9/12", "=8/12", …), HTML labels so text isn't stretched;
+  per-step text hidden by default with a "show text" toggle. Live E2E
+  confirmed circles + write labels.
+- **S8**: autopsy quiz "point at it" uses /api/point (button "Check where I'm
+  pointing"); stale highlight cleared between words.
+
+**Needs on-device validation**: /api/point pointing accuracy + latency with a
+real hand/worksheet (the whole tracking premise); tune the locatePointer
+prompt if it misreads pose; confirm word-box highlights on real print;
+tutoring on-paper label placement legibility. R9 (full-LLM autopsy coaching)
+still only-if-needed. Production = push to origin/main (user's call).
+
 ## RESUME FROM HERE (2026-07-18, fourth session — REWORK R0–R8 complete)
 
 All nine phases of the approved rework plan (IMPLEMENTATION_PLAN.md top
