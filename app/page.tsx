@@ -1,10 +1,10 @@
 "use client";
 
 /**
- * Mode selector — walkthrough-themed home (how_it_works_walkthrough.html):
- * notebook paper, ink-outlined cards with offset shadows, IBM Plex +
- * Bricolage type, animated karaoke demo line, and per-feature stamps that
- * tell parents exactly where AI is (and is not) allowed to live.
+ * Mode selector — notebook-themed home. The three feature cards grow to fill
+ * the viewport (no empty bottom band); minimal copy; the signature karaoke
+ * demo and a self-hosted Lottie accent carry the "modern, alive" feel while
+ * keeping the paper aesthetic.
  */
 
 import { useEffect, useState } from "react";
@@ -17,26 +17,29 @@ const FEATURES = [
   {
     href: "/exam-prep",
     n: "01",
-    title: "Exam-Prep Mode",
-    tag: "Reads exactly what's written — like a human exam reader",
-    hint: "point at a line → hear it verbatim → parents see the patterns",
-    stamp: { cls: "stamp-det", label: "No AI in this path" },
+    title: "Exam-Prep",
+    tag: "Point at a line — it’s read out loud, word for word.",
+    stamp: { cls: "stamp-det", label: "Reads verbatim" },
+    accent: "var(--point)",
+    emoji: "👉",
   },
   {
     href: "/tutoring",
     n: "02",
     title: "AI Tutoring",
-    tag: "Step-by-step explanations that glow on the worksheet",
-    hint: "ask by voice or typing → steps narrate + highlight in sync",
-    stamp: { cls: "stamp-ai", label: "AI explains here" },
+    tag: "Ask anything — the working appears on the paper.",
+    stamp: { cls: "stamp-ai", label: "AI explains" },
+    accent: "var(--ai)",
+    emoji: "✏️",
   },
   {
     href: "/autopsy",
     n: "03",
     title: "Stuck-Word Autopsy",
-    tag: "A stuck word becomes the best teaching moment of the day",
-    hint: "point at a word → sound it out → trace it on paper → chime",
-    stamp: { cls: "stamp-det", label: "Recorded phonemes · zero AI" },
+    tag: "Sound out a tricky word, then quiz yourself.",
+    stamp: { cls: "stamp-det", label: "Zero AI voice" },
+    accent: "var(--ok)",
+    emoji: "🔤",
   },
 ];
 
@@ -50,29 +53,20 @@ export default function ModeSelector() {
   }, []);
 
   return (
-    <main className="mx-auto flex min-h-dvh w-full max-w-md flex-col gap-2.5 p-4 pb-4">
-      <header className="relative pt-2">
-        {/* Animated pointer accent (original CC0 Lottie, self-hosted). */}
+    <main className="mx-auto flex h-dvh w-full max-w-md flex-col gap-2.5 overflow-hidden p-4">
+      <header className="relative shrink-0 pt-1">
         <LottieBadge
           src="/lottie/pointer-bounce.json"
-          className="pointer-events-none absolute -top-1 right-0 h-16 w-16"
+          className="pointer-events-none absolute -top-2 right-0 h-14 w-14"
         />
-        <p className="eyebrow mb-1.5">Tech4City 2026 · Assistive Reading</p>
-        <h1 className="font-display max-w-[19ch] text-2xl font-extrabold leading-[1.12] tracking-tight">
-          Homework help that <span className="swipe">reads the rules</span>, then teaches the
-          word.
+        <h1 className="font-display max-w-[15ch] text-[26px] font-extrabold leading-[1.1] tracking-tight">
+          Homework that <span className="swipe">reads itself</span>.
         </h1>
-        <p className="mt-1.5 text-[13px] leading-snug text-[var(--ink-soft)]">
-          Stand the phone so the camera sees the worksheet, then pick a feature —{" "}
-          <b className="text-[var(--ink)]">nothing added, nothing changed</b>.
-        </p>
       </header>
 
-      {/* Live karaoke demo — the product's signature interaction. */}
-      <div className="card px-3 py-2" aria-hidden>
-        <span className="mono-hint mb-1 block uppercase tracking-[0.1em]">
-          Live highlight, synced to the voice
-        </span>
+      {/* Signature karaoke demo. */}
+      <div className="card shrink-0 px-3 py-2" aria-hidden>
+        <span className="mono-hint mb-0.5 block uppercase tracking-[0.1em]">live · synced to the voice</span>
         <p className="text-[15px] font-medium leading-relaxed">
           {KARAOKE_WORDS.map((w, i) => (
             <span key={i}>
@@ -88,35 +82,43 @@ export default function ModeSelector() {
         </p>
       </div>
 
-      <nav className="flex flex-col gap-3" aria-label="Features">
-        {FEATURES.map((f) => (
+      {/* Feature cards grow to fill the screen. */}
+      <nav className="flex min-h-0 flex-1 flex-col gap-2.5" aria-label="Features">
+        {FEATURES.map((f, i) => (
           <Link
             key={f.href}
             href={f.href}
-            className="card group p-3 transition-transform duration-150 hover:-translate-x-px hover:-translate-y-px hover:shadow-[6px_6px_0_rgba(34,48,63,0.16)] active:translate-x-px active:translate-y-px active:shadow-[2px_2px_0_rgba(34,48,63,0.12)]"
+            style={{ animationDelay: `${i * 90}ms` }}
+            className="card fadein group relative flex flex-1 flex-col justify-center overflow-hidden p-3.5 pl-5 transition-transform duration-150 hover:-translate-x-px hover:-translate-y-px hover:shadow-[6px_6px_0_rgba(34,48,63,0.16)] active:translate-x-px active:translate-y-px active:shadow-[2px_2px_0_rgba(34,48,63,0.12)]"
           >
-            <div className="flex items-baseline gap-2.5">
-              <span className="mono-hint !text-[var(--pen)]">{f.n}</span>
-              <h2 className="font-display text-[17px] font-extrabold">{f.title}</h2>
-              <span className="ml-auto text-lg text-[var(--pen)] transition-transform duration-150 group-hover:translate-x-0.5">
+            {/* Accent stripe. */}
+            <span
+              className="absolute inset-y-0 left-0 w-2"
+              style={{ background: f.accent }}
+              aria-hidden
+            />
+            <div className="flex items-center gap-2.5">
+              <span className="text-2xl" aria-hidden>
+                {f.emoji}
+              </span>
+              <div className="min-w-0">
+                <h2 className="font-display text-lg font-extrabold leading-tight">{f.title}</h2>
+                <p className="mt-0.5 text-[13px] leading-snug text-[var(--ink-soft)]">{f.tag}</p>
+              </div>
+              <span
+                className="ml-auto self-start text-xl transition-transform duration-150 group-hover:translate-x-0.5"
+                style={{ color: f.accent }}
+                aria-hidden
+              >
                 →
               </span>
             </div>
-            <p className="mt-0.5 text-[13px] text-[var(--ink-soft)]">{f.tag}</p>
-            <div className="mt-1.5 flex flex-wrap items-center gap-2">
-              <span className={`stamp ${f.stamp.cls}`}>{f.stamp.label}</span>
-            </div>
+            <span className={`stamp ${f.stamp.cls} mt-2 self-start`}>{f.stamp.label}</span>
           </Link>
         ))}
       </nav>
 
-      <div className="flex flex-wrap gap-1.5">
-        <span className="chip !py-1 !text-[11px]">📱 phone in a stand</span>
-        <span className="chip !py-1 !text-[11px]">📄 worksheet in front</span>
-        <span className="chip !py-1 !text-[11px]">👉 point with a finger</span>
-      </div>
-
-      <footer className="mt-auto flex flex-wrap justify-between gap-2 border-t-[1.5px] border-[var(--ink)] pt-2">
+      <footer className="shrink-0 border-t-[1.5px] border-[var(--ink)] pt-1.5">
         <span className="mono-hint">3 features · 1 phone · 0 extra computers</span>
       </footer>
     </main>
