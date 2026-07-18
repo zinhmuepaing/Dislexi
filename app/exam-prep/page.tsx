@@ -27,6 +27,7 @@ import { selectWordAt, startFingerLoop, DwellTracker, Point } from "@/lib/hand-t
 import { speak, stopSpeaking, announce, primeSpeech } from "@/lib/speech";
 import { installAudioUnlock } from "@/lib/audio";
 import { SessionLogger } from "@/lib/event-queue";
+import { buildSentences, blockToSentenceMap, localWordAt, Sentence } from "@/lib/sentences";
 
 interface OcrResponse {
   blocks: { text: string; confidence: number; box: [number, number][] }[];
@@ -35,6 +36,10 @@ interface OcrResponse {
 interface Scan {
   frame: CapturedFrame;
   blocks: OcrBox[];
+  /** Line-blocks grouped into sentences — the unit that gets read aloud. */
+  sentences: Sentence[];
+  /** blockSentence[blockIndex] = sentence index the line belongs to. */
+  blockSentence: number[];
 }
 
 // Web Speech API (trigger keyword match only — nothing recorded, §7 rule 8).
@@ -61,7 +66,7 @@ export default function ExamPrepPage() {
   const scanRef = useRef<Scan | null>(null);
   const scanningRef = useRef(false);
   const hoverRef = useRef<number | null>(null);
-  const dwellRef = useRef<DwellTracker>(new DwellTracker(650, 250, 500));
+  const dwellRef = useRef<DwellTracker>(new DwellTracker(300, 250, 500));
   const stopLoopRef = useRef<(() => void) | null>(null);
   const autoScanTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
 
@@ -81,7 +86,7 @@ export default function ExamPrepPage() {
 
   function startLoop() {
     stopLoop();
-    dwellRef.current = new DwellTracker(650, 250, 500);
+    dwellRef.current = new DwellTracker(300, 250, 500);
     stopLoopRef.current = startFingerLoop({
       getCanvas: () => stage.current?.getCanvas() ?? null,
       onSample: (sample) => {
@@ -94,13 +99,19 @@ export default function ExamPrepPage() {
           setDwellProgress(0);
           return;
         }
+        // Point at a line, but dwell on (and read) the whole SENTENCE it
+        // belongs to — the key is the sentence index, so tracking across a
+        // wrapped line never resets the dwell clock.
         let key: string | null = null;
         if (sample) {
           const block = selectWordAt(
             { x: sample.x * current.frame.width, y: sample.y * current.frame.height },
             current.blocks,
           );
-          if (block) key = String(current.blocks.indexOf(block));
+          if (block) {
+            const si = current.blockSentence[current.blocks.indexOf(block)];
+            if (si !== undefined) key = String(si);
+          }
         }
         const res = dwellRef.current.update(key, performance.now());
         const hoverIdx = res.hover === null ? null : Number(res.hover);
@@ -108,8 +119,8 @@ export default function ExamPrepPage() {
         setHover(hoverIdx);
         setDwellProgress(res.progress);
         if (res.fired !== null) {
-          const block = current.blocks[Number(res.fired)];
-          if (block) void readBlock(block);
+          const sentence = current.sentences[Number(res.fired)];
+          if (sentence) void readSentence(sentence);
         }
       },
     });
@@ -146,7 +157,13 @@ export default function ExamPrepPage() {
         setStatus("No text found — lay the worksheet flat and tap Rescan.");
         return;
       }
-      const next: Scan = { frame: captured, blocks };
+      const sentences = buildSentences(blocks);
+      const next: Scan = {
+        frame: captured,
+        blocks,
+        sentences,
+        blockSentence: blockToSentenceMap(sentences),
+      };
       scanRef.current = next;
       setScan(next);
       setStatus("Point at a line and hold still — it will be read aloud.");
@@ -166,20 +183,28 @@ export default function ExamPrepPage() {
     }, SCAN_SETTLE_MS);
   }
 
-  async function readBlock(block: OcrBox) {
+  async function readSentence(sentence: Sentence) {
     if (busyRef.current) return;
     busyRef.current = true;
-    setSelected(block);
+    setSelected(sentence.blocks[0] ?? null);
     setActiveChar({ start: 0, len: 0 });
-    const reread = spokenTexts.current.has(block.text);
-    spokenTexts.current.add(block.text);
-    logger.current?.log({ type: reread ? "reread" : "read", word: block.text });
-    setStatus(`Reading: “${block.text}”`);
+    const reread = spokenTexts.current.has(sentence.text);
+    spokenTexts.current.add(sentence.text);
+    logger.current?.log({ type: reread ? "reread" : "read", word: sentence.text });
+    setStatus(`Reading: “${sentence.text}”`);
 
     try {
-      // VERBATIM: block.text goes to TTS untouched (§5.4).
-      await speak(block.text, {
-        onWordBoundary: (start, len) => setActiveChar({ start, len }),
+      // VERBATIM: the sentence text is the member lines' OCR text concatenated
+      // untouched — no rewriting layer between OCR and TTS (§5.4). The word
+      // boundary offset is mapped back to the line it falls in so the highlight
+      // hops from one line's box to the next as the sentence is read.
+      await speak(sentence.text, {
+        onWordBoundary: (start, len) => {
+          const w = localWordAt(sentence, start, len);
+          if (!w) return;
+          setSelected(sentence.blocks[w.memberIndex]);
+          setActiveChar({ start: w.localStart, len: w.localLength });
+        },
       });
       setStatus("Point at a line and hold still — it will be read aloud.");
     } catch (err) {
@@ -191,16 +216,16 @@ export default function ExamPrepPage() {
     busyRef.current = false;
   }
 
-  /** Voice trigger / button: read the pointed line immediately (no dwell). */
+  /** Voice trigger / button: read the pointed sentence immediately (no dwell). */
   function readPointedNow() {
     const current = scanRef.current;
     if (!current || busyRef.current) return;
     const idx = hoverRef.current;
-    if (idx === null || !current.blocks[idx]) {
+    if (idx === null || !current.sentences[idx]) {
       setStatus("Point your finger at a line first.");
       return;
     }
-    void readBlock(current.blocks[idx]);
+    void readSentence(current.sentences[idx]);
   }
 
   useEffect(() => {
@@ -298,7 +323,9 @@ export default function ExamPrepPage() {
           scheduleAutoScan();
         }}
       >
-        {/* Line outlines — aim guides (walkthrough "box" visual). */}
+        {/* Line outlines — aim guides (walkthrough "box" visual). Hover lights
+            every line of the pointed SENTENCE; the dwell bar sits under its
+            last line. */}
         {scan &&
           scan.blocks.map((b, i) => {
             const xs = b.box.map(([x]) => x);
@@ -307,7 +334,10 @@ export default function ExamPrepPage() {
             const top = Math.min(...ys);
             const w = Math.max(...xs) - left;
             const h = Math.max(...ys) - top;
-            const isHover = hover === i;
+            const isHover = hover !== null && scan.blockSentence[i] === hover;
+            const sentence = hover !== null ? scan.sentences[hover] : undefined;
+            const isLastOfHover =
+              isHover && sentence !== undefined && sentence.blockIndices[sentence.blockIndices.length - 1] === i;
             return (
               <div
                 key={i}
@@ -323,7 +353,7 @@ export default function ExamPrepPage() {
                   height: `${(h / frameH) * 100}%`,
                 }}
               >
-                {isHover && dwellProgress > 0 && (
+                {isLastOfHover && dwellProgress > 0 && (
                   <div
                     className="absolute -bottom-1 left-0 h-[3px] rounded bg-[var(--hl-strong)]"
                     style={{ width: `${dwellProgress * 100}%` }}

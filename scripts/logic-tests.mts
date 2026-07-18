@@ -15,6 +15,7 @@ import {
 import { chunksFor, chunkPattern, normalizeWord } from "../lib/graphemes";
 import { computeStats } from "../lib/analytics";
 import { parseSteps } from "../lib/tutor-model";
+import { buildSentences, blockToSentenceMap, localWordAt } from "../lib/sentences";
 
 const box = (l: number, t: number, r: number, b: number): [number, number][] => [
   [l, t],
@@ -192,6 +193,58 @@ const box = (l: number, t: number, r: number, b: number): [number, number][] => 
 
   assert.deepEqual(parseSteps("no json here"), []);
   assert.deepEqual(parseSteps('{"steps":[{"say":"","region":{}}]}'), []); // empty say dropped
+}
+
+// ── buildSentences: group lines by punctuation + geometry, verbatim join ─────
+{
+  // A title (no punctuation, then a paragraph gap), a question wrapping two
+  // tightly-spaced lines ending "?", and an answer wrapping two lines ending ".".
+  const lines: OcrBox[] = [
+    { text: "Electrical System Design for Buildings", box: box(50, 0, 450, 20) },
+    { text: "What is the typical shape and structure of a", box: box(50, 60, 450, 80) },
+    { text: "trunking system?", box: box(50, 82, 250, 102) },
+    { text: "It is usually square or rectangular in shape and has one", box: box(50, 104, 450, 124) },
+    { text: "removable side for easy access to the cables.", box: box(50, 126, 450, 146) },
+  ];
+  const sentences = buildSentences(lines);
+  assert.equal(sentences.length, 3);
+  // Title stands alone (paragraph gap breaks it off despite no punctuation).
+  assert.equal(sentences[0].text, "Electrical System Design for Buildings");
+  // Wrapped question rejoined VERBATIM with a single space, across two lines.
+  assert.equal(sentences[1].text, "What is the typical shape and structure of a trunking system?");
+  assert.equal(sentences[1].blocks.length, 2);
+  assert.equal(sentences[2].text, "It is usually square or rectangular in shape and has one removable side for easy access to the cables.");
+
+  // blockToSentence map: line index → sentence index.
+  assert.deepEqual(blockToSentenceMap(sentences), [0, 1, 1, 2, 2]);
+
+  // localWordAt: offset maps back to the member line + local range.
+  const q = sentences[1];
+  const first = localWordAt(q, 0, 4)!; // "What" on line 0
+  assert.deepEqual(first, { memberIndex: 0, localStart: 0, localLength: 4 });
+  const trunkingStart = q.ranges[1].start;
+  const second = localWordAt(q, trunkingStart, 8)!; // "trunking" on line 1
+  assert.deepEqual(second, { memberIndex: 1, localStart: 0, localLength: 8 });
+
+  // A terminal period followed by a tight next line still breaks the sentence.
+  const tight: OcrBox[] = [
+    { text: "Stop here.", box: box(0, 0, 100, 20) },
+    { text: "New one", box: box(0, 21, 100, 41) },
+  ];
+  assert.equal(buildSentences(tight).length, 2);
+
+  // Empty blocks are dropped and break the current group.
+  const withEmpty: OcrBox[] = [
+    { text: "alpha", box: box(0, 0, 100, 20) },
+    { text: "   ", box: box(0, 21, 100, 41) },
+    { text: "beta", box: box(0, 42, 100, 62) },
+  ];
+  const grouped = buildSentences(withEmpty);
+  assert.equal(grouped.length, 2);
+  const emptyMap = blockToSentenceMap(grouped);
+  assert.equal(emptyMap[0], 0);
+  assert.equal(emptyMap[1], undefined); // dropped empty line maps to nothing
+  assert.equal(emptyMap[2], 1);
 }
 
 console.log("logic-tests: all assertions passed");

@@ -51,14 +51,20 @@ const SOURCES: Record<string, string> = {
   or: "Open-mid back rounded vowel.ogg",
   ur: "Open-mid central unrounded vowel.ogg",
   schwa: "Mid-central vowel.ogg",
-  // Diphthongs / r-controlled without a Commons IPA recording — gap-fill:
-  ae: "", // /eɪ/ as in rain
-  igh: "", // /aɪ/ as in night
-  oa: "", // /əʊ/ as in boat
-  ow: "", // /aʊ/ as in cow
-  oi: "", // /ɔɪ/ as in coin
-  air: "", // /eə/ as in chair
-  ear: "", // /ɪə/ as in dear
+  // Diphthongs (2026-07-17): Commons' IPA demo sets skip diphthongs, but two
+  // isolated Lingua Libre recordings exist, and the rest are covered by real
+  // human recordings of words whose ENTIRE pronunciation is the pure diphthong
+  // (non-rhotic UK/RP: "I" = /aɪ/, "oh" = /əʊ/, "oi" = /ɔɪ/, "ear" = /ɪə/,
+  // letter "a" = /eɪ/). Still §7-rule-4 compliant — human recordings, never
+  // TTS. LISTEN-VERIFY each before shipping (see ATTRIBUTIONS note): the "a"
+  // recording especially could be the weak form /ə/ rather than /eɪ/.
+  ae: "En-uk-a.ogg", // /eɪ/ as in rain — letter/article "a" strong form; VERIFY not /ə/
+  igh: "En-uk-I.ogg", // /aɪ/ as in night — the word "I"
+  oa: "En-uk-oh.ogg", // /əʊ/ as in boat — the word "oh"
+  ow: "LL-Q1860 (eng)-Pvanp7-aʊ (diphthong).wav", // /aʊ/ as in cow — isolated
+  oi: "En-uk-oi.ogg", // /ɔɪ/ as in coin — the interjection "oi"
+  air: "LL-Q1860 (eng)-Pvanp7-ɛə (diphthong).wav", // /eə/ as in chair — isolated
+  ear: "En-uk-ear.ogg", // /ɪə/ as in dear — the word "ear" (non-rhotic UK)
 };
 
 interface ImageInfo {
@@ -133,6 +139,12 @@ const attributions = `# Phoneme bank attributions
 Sourced from Wikimedia Commons IPA recordings (mp3 transcodes served by
 Commons). Each file's license below was read from the Commons API at download
 time — verify before shipping. Gap-fill files are self-recorded (CC0).
+
+Diphthongs (ae/igh/oa/oi/ear) are human recordings of words whose entire
+pronunciation IS the pure diphthong (non-rhotic UK: "a" /eɪ/, "I" /aɪ/,
+"oh" /əʊ/, "oi" /ɔɪ/, "ear" /ɪə/); air/ow are isolated Lingua Libre
+recordings. LISTEN-VERIFY each diphthong before shipping — especially ae
+("a" must be the strong form /eɪ/, not the weak /ə/).
 
 | File | Commons source file | Author | Source page | License |
 |---|---|---|---|---|

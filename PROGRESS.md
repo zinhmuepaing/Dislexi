@@ -120,7 +120,12 @@ All verification gates PASSED on 2026-07-17 (second session — shell recovered)
   microsoft-cognitiveservices-speech-sdk — install-time noise only, no action.
 - Live on-device pass with real camera/phone: TTS karaoke, autopsy sweep,
   Telegram delivery.
-- Self-record the 7 diphthong phonemes (CC0) and drop into `public/phonemes/`.
+- ~~Self-record the 7 diphthong phonemes~~ **RESOLVED 2026-07-17**: all 7
+  sourced from Commons after all (43/43, 0 gap-fill). air/ow = isolated
+  Lingua Libre diphthong recordings; ae/igh/oa/oi/ear = human recordings of
+  pure-diphthong words (UK "a"/"I"/"oh"/"oi"/"ear"). All open-licensed
+  (see ATTRIBUTIONS.md). **LISTEN-VERIFY each on device** — especially
+  ae.mp3: the "a" recording must be the strong form /eɪ/, not weak /ə/.
 
 ## BLOCKED - NEEDS ACTION
 
