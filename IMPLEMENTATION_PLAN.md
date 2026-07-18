@@ -21,43 +21,43 @@ this section tracks the rework. Rule amendments approved via team Q&A:
 
 Phases (mark as they land):
 
-- [ ] **R0 — Plan + rule amendments in-repo** (this section; ARCHITECTURE.md
+- [x] **R0 — Plan + rule amendments in-repo** (this section; ARCHITECTURE.md
   §7 rules 3 & 4; CLAUDE.md mirror).
-- [ ] **R1 — Responsive shell**: `h-dvh` app shell; camera capped
+- [x] **R1 — Responsive shell**: `h-dvh` app shell; camera capped
   (~44dvh); Rescan/End-session and all controls visible WITHOUT scrolling on
   home/exam-prep/tutoring/autopsy at 375×812; stats page keeps scrolling.
-- [ ] **R2 — Telegram delivery bug**: reproduce stats-page send; fix
+- [x] **R2 — Telegram delivery bug**: reproduce stats-page send; fix
   (likely re-wrap `req.formData()` Blob into a fresh typed `File` for the
   outbound undici FormData); surface Telegram `description` to the client;
   verify one real delivery.
-- [ ] **R3 — Voice engine**: `lib/stt.ts` — Azure Speech SDK continuous
+- [x] **R3 — Voice engine**: `lib/stt.ts` — Azure Speech SDK continuous
   recognition via `/api/azure-token` (endless until mic toggled off / End
   session; endpointing = silence chunking; NO raw audio stored, §7 rule 8;
   webkitSpeechRecognition fallback). `POST /api/voice-command` →
   `parseVoiceCommand()` in `lib/tutor-model.ts` (claude-haiku-4-5; strict
   JSON `{intent, scope?}`); client keyword fast-path first.
-- [ ] **R4 — Exam-Prep scopes + tracking**: Word/Sentence(default)/Paragraph
+- [x] **R4 — Exam-Prep scopes + tracking**: Word/Sentence(default)/Paragraph
   selector (chips + voice); `buildParagraphs()` added to `lib/sentences.ts`;
   word mode via `subBoxFor` sub-boxes; asymmetric vertical weighting in
   `selectWordAt` (boxes ABOVE the pointer cost less — the finger occludes
   below); "point just under the word" hint; voice: read this
   word/sentence/paragraph, again, stop.
-- [ ] **R5 — Tutoring highlights + aids + auto-ask**: OCR line map sent with
+- [x] **R5 — Tutoring highlights + aids + auto-ask**: OCR line map sent with
   the tutor request; model outputs ANCHORS (`{line, phrase}`) never raw
   coords; server resolves anchors → normalized rects via `subBoxFor`;
   optional `aids` (box/circle/arrow between anchors) rendered as SVG
   overlays; STT auto-submits the question on silence (text box stays as
   §9.5 fallback).
-- [ ] **R6 — Autopsy deterministic coaching**: syllables via `hypher` +
+- [x] **R6 — Autopsy deterministic coaching**: syllables via `hypher` +
   `hyphenation.en-us`; fixed template "This word is 'Awards'. A — wards —
   Awards." spoken twice (word verbatim from OCR); practice list kept for the
   quiz; phoneme sweep stays behind "sound it out"; trace-to-unlock retired
   from the practice loop.
-- [ ] **R7 — End-of-session quiz + score**: skippable per-word quiz (say it
+- [x] **R7 — End-of-session quiz + score**: skippable per-word quiz (say it
   → STT fuzzy match ≥0.8; point at it → containment check, 10 s); score on
   the stats page; DB migration adds `'quiz_result'` to the `events.type`
   check (SETUP.md; apply in Supabase).
-- [ ] **R8 — Landing + Lottie**: trim copy (KEEP karaoke line + notebook
+- [x] **R8 — Landing + Lottie**: trim copy (KEEP karaoke line + notebook
   theme); `lottie-web` + self-hosted vetted animations in `public/lottie/`
   (+ ATTRIBUTIONS.md); used on hero, quiz success, tutoring thinking.
 - [ ] **R9 — CONTINGENCY (only if R6 quality disappoints on-device)**:

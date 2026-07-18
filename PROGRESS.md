@@ -1,5 +1,43 @@
 # PROGRESS.md — Dislexi build session log
 
+## RESUME FROM HERE (2026-07-18, fourth session — REWORK R0–R8 complete)
+
+All nine phases of the approved rework plan (IMPLEMENTATION_PLAN.md top
+section) landed, one commit per phase (R0…R8). Gates green on every phase:
+build + eslint (0 errors, 0 warnings) + logic tests. Highlights:
+
+- **R1 responsive**: h-dvh shells + camera capped at 42dvh — all controls
+  visible without scrolling at 375×812 (browser-verified on all pages).
+- **R2 Telegram fix (root-caused)**: chart PNGs at phone DPR 3 pushed report
+  uploads past Vercel's 4.5 MB body limit → 413. Now JPEG charts at DPR 2 +
+  size guard + real error passthrough. 5.2 MB probe against production
+  reproduced the 413; patched route delivers.
+- **R3 voice engine**: lib/stt.ts (Azure continuous STT, endless mic,
+  transcripts only — rule 8), lib/voice-commands.ts fast-path,
+  /api/voice-command (claude-haiku-4-5, intent ONLY — amended rule 3).
+- **R4 Exam-Prep**: Word/Sentence/Paragraph scopes (buildParagraphs in
+  lib/sentences.ts), asymmetric above-cheap/below-expensive selection
+  (nail-occlusion fix), voice commands wired; TTS stays verbatim OCR.
+- **R5 tutoring accuracy**: OCR line map → model returns {line, phrase}
+  ANCHORS (never coordinates) → server resolves rects deterministically;
+  box/circle/arrow aids as SVG; spoken questions auto-send on silence.
+  Live E2E on a synthetic worksheet: anchors + aids resolved precisely.
+- **R6 autopsy**: deterministic syllable coaching ("This word is Awards.
+  A, wards, Awards." ×2) via hypher patterns + vowel-group fallback
+  (lib/syllables.ts); phoneme sweep behind "sound it out"; trace retired.
+- **R7 quiz**: end-of-session say-it (lib/text-match.ts fuzzy) + point-at-it
+  quiz, quiz_result events, score card on stats.
+  ⚠ **USER ACTION: run the SETUP.md `events_type_check` MIGRATION in
+  Supabase (adds 'quiz_result') — quiz events are rejected until then.**
+- **R8**: LottieBadge (lazy lottie_light) + two ORIGINAL CC0 animations in
+  public/lottie/ (pointer-bounce hero, star-pop quiz); theme untouched.
+
+**Needs on-device validation**: dwell timings (300 ms exam-prep / 700 ms
+autopsy), pointer extension + asymmetric weights with the real camera; Azure
+STT endpointing pace; syllable quality on real worksheet words (fallback to
+R9 full-LLM coaching only if it disappoints); real stats-page Telegram send
+from the phone. Production deploy = push to origin/main (user's call).
+
 ## RESUME FROM HERE (2026-07-17, third session — interaction & UI rework)
 
 Repo/remote gap checked: local `main` == `origin/main`; production
