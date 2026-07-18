@@ -17,6 +17,7 @@ import { computeStats } from "../lib/analytics";
 import { parseSteps } from "../lib/tutor-model";
 import { buildSentences, buildParagraphs, blockToSentenceMap, localWordAt } from "../lib/sentences";
 import { fastParseCommand } from "../lib/voice-commands";
+import { syllablesOf, coachingLines } from "../lib/syllables";
 
 const box = (l: number, t: number, r: number, b: number): [number, number][] => [
   [l, t],
@@ -325,9 +326,29 @@ const box = (l: number, t: number, r: number, b: number): [number, number][] => 
   assert.deepEqual(fastParseCommand("scan again"), { intent: "rescan" });
   assert.deepEqual(fastParseCommand("I'm stuck on this word"), { intent: "stuck_word" });
   assert.deepEqual(fastParseCommand("what is this word"), { intent: "stuck_word" });
+  assert.deepEqual(fastParseCommand("can you sound it out"), { intent: "sound_out" });
   // Not classifiable → null → the caller may consult the LLM.
   assert.equal(fastParseCommand("um so like the thing over there"), null);
   assert.equal(fastParseCommand(""), null);
+}
+
+// ── syllables: deterministic splits (patterns + vowel-group fallback) ────────
+{
+  assert.deepEqual(syllablesOf("awards"), ["a", "wards"]);
+  assert.deepEqual(syllablesOf("Awards!"), ["A", "wards"]); // case + punctuation kept sane
+  assert.deepEqual(syllablesOf("rectangle"), ["rec", "tan", "gle"]);
+  assert.deepEqual(syllablesOf("battery"), ["bat", "tery"]);
+  assert.deepEqual(syllablesOf("beautiful"), ["beau", "ti", "ful"]);
+  assert.deepEqual(syllablesOf("together"), ["to", "geth", "er"]);
+  assert.deepEqual(syllablesOf("charge"), ["charge"]); // silent e — one syllable
+  assert.deepEqual(syllablesOf("cat"), ["cat"]);
+  assert.deepEqual(syllablesOf("123"), []); // nothing pronounceable
+  // Coaching template: intro round + repeat round, word verbatim.
+  assert.deepEqual(coachingLines("Awards"), [
+    "This word is Awards. A, wards, Awards.",
+    "A, wards, Awards.",
+  ]);
+  assert.deepEqual(coachingLines("cat"), ["This word is cat. cat, cat.", "cat, cat."]);
 }
 
 console.log("logic-tests: all assertions passed");

@@ -1,23 +1,19 @@
 "use client";
 
 /**
- * Stuck-Word Autopsy + Trace-to-Unlock (ARCHITECTURE.md §8).
+ * Stuck-Word Autopsy — syllable coaching (REWORK R6, amended §7 rules 3–4).
  *
- * COMPLIANCE (§7 rules 3–4): NO LLM anywhere in the sound-out path, and
- * phonemes NEVER come from TTS — only the static pre-recorded bank at
- * /public/phonemes/{id}.mp3. TTS is used solely to speak the WHOLE word
- * (first selection, and the blend after the chunk sweep).
+ * Practice flow: point at a word (dwell) or point + say "I'm stuck on this
+ * word" → the app coaches with a FIXED template, spoken twice:
+ * "This word is Awards. A, wards, Awards." — the word is verbatim OCR text,
+ * syllables are deterministic letter-substrings (lib/syllables.ts — data
+ * tables + vowel rules, NO model). TTS speaks words and syllables only;
+ * ISOLATED PHONEMES still come exclusively from the static bank, available
+ * via the "sound it out" voice command (GraphemeSweep + /public/phonemes).
  *
- * Point-to-select flow (2026-07-17 rework — tap selection removed):
- * enter → camera ready → AUTO scan (one frame; preview stays live) →
- * continuous fingertip loop → dwell on a word → speak that word only, log
- * 'stuck_word' → KEEP pointing at the same word → grapheme chunks
- * (lib/graphemes.ts, §7 rule 7 proportional split) → gapless sweep playing
- * static phonemes (WebAudio-scheduled), log 'autopsy_soundout' → blend whole
- * word via TTS → "now trace it" (announced aloud, §7 rule 6) → ~5 fps
- * MediaPipe loop verifies fingertip (landmark 8) inside the word box with
- * net left-to-right motion → chime, log 'trace_complete' with the pattern →
- * back to pointing (same scan — no re-capture needed).
+ * The LLM appears ONLY as voice-command intent parser (amended rule 3).
+ * Every practiced word is collected for the end-of-session quiz (R7).
+ * Trace-to-unlock retired from the practice loop (2026-07-18).
  */
 
 import { useEffect, useRef, useState } from "react";
@@ -27,32 +23,28 @@ import { CameraStage, CameraStageHandle, CapturedFrame } from "@/components/Came
 import { GraphemeSweep } from "@/components/GraphemeSweep";
 import { OcrBox, subBoxFor } from "@/components/KaraokeHighlight";
 import { chunksFor, chunkPattern, normalizeWord, GraphemeChunkDef } from "@/lib/graphemes";
-import {
-  detectFingertipVideo,
-  endTraceMode,
-  selectWordAt,
-  startFingerLoop,
-  traceSatisfied,
-  DwellTracker,
-  Point,
-} from "@/lib/hand-tracker";
-import { speak, stopSpeaking, announce, primeSpeech, synthesizeSpeech } from "@/lib/speech";
-import { installAudioUnlock, loadClip, playSequence, playChime } from "@/lib/audio";
+import { selectWordAt, startFingerLoop, DwellTracker, Point } from "@/lib/hand-tracker";
+import { speak, speakSteps, stopSpeaking, announce, primeSpeech } from "@/lib/speech";
+import { installAudioUnlock, loadClip, playSequence, Playback } from "@/lib/audio";
 import { SessionLogger } from "@/lib/event-queue";
+import { coachingLines } from "@/lib/syllables";
+import { resolveVoiceCommand } from "@/lib/voice-commands";
+import { startVoiceListener, VoiceListener } from "@/lib/stt";
 
 interface WordEntry extends OcrBox {
   key: string;
 }
 
-type Phase = "live" | "pointing" | "sounding" | "tracing";
+export interface PracticedWord {
+  text: string;
+  box: [number, number][];
+}
 
-const TRACE_SAMPLE_MS = 200; // ~5 fps (§2)
-const TRACE_TIMEOUT_MS = 45_000;
+type Phase = "live" | "pointing" | "coaching" | "sweeping";
+
 const SCAN_SETTLE_MS = 900;
 
-/** Split a block into word entries with proportional sub-boxes (§7 rule 7).
- * `gen` (capture generation) keeps keys unique across captures, so a stale
- * selection can never match a word from a newer frame. */
+/** Split a block into word entries with proportional sub-boxes (§7 rule 7). */
 function wordsOf(block: OcrBox, blockIndex: number, gen: number): WordEntry[] {
   const words: WordEntry[] = [];
   const re = /\S+/g;
@@ -77,16 +69,19 @@ export default function AutopsyPage() {
   const router = useRouter();
   const stage = useRef<CameraStageHandle>(null);
   const logger = useRef<SessionLogger | null>(null);
-  const traceRun = useRef(0);
   const captureGen = useRef(0);
   const busyRef = useRef(false);
   const scanningRef = useRef(false);
   const phaseRef = useRef<Phase>("live");
   const wordsRef = useRef<WordEntry[]>([]);
   const frameRef = useRef<CapturedFrame | null>(null);
-  const stuckRef = useRef<WordEntry | null>(null);
+  const lastTipRef = useRef<Point | null>(null);
+  const lastWordRef = useRef<WordEntry | null>(null);
+  const practiceRef = useRef<PracticedWord[]>([]);
+  const sweepRef = useRef<Playback | null>(null);
   const dwellRef = useRef<DwellTracker>(new DwellTracker(700, 250, 500));
   const stopLoopRef = useRef<(() => void) | null>(null);
+  const listenerRef = useRef<VoiceListener | null>(null);
   const autoScanTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
 
   const [phase, setPhase] = useState<Phase>("live");
@@ -98,6 +93,8 @@ export default function AutopsyPage() {
   const [stuck, setStuck] = useState<WordEntry | null>(null);
   const [chunks, setChunks] = useState<GraphemeChunkDef[]>([]);
   const [activeChunk, setActiveChunk] = useState(-1);
+  const [practicedCount, setPracticedCount] = useState(0);
+  const [listening, setListening] = useState(false);
   const [status, setStatus] = useState("Starting camera…");
 
   function setPhaseBoth(p: Phase) {
@@ -105,14 +102,15 @@ export default function AutopsyPage() {
     setPhase(p);
   }
 
-  function setStuckBoth(w: WordEntry | null) {
-    stuckRef.current = w;
-    setStuck(w);
-  }
-
   function stopLoop() {
     stopLoopRef.current?.();
     stopLoopRef.current = null;
+  }
+
+  function stopAllAudio() {
+    stopSpeaking();
+    sweepRef.current?.stop();
+    sweepRef.current = null;
   }
 
   function startLoop() {
@@ -122,6 +120,7 @@ export default function AutopsyPage() {
       getCanvas: () => stage.current?.getCanvas() ?? null,
       onSample: (sample) => {
         setTip(sample);
+        lastTipRef.current = sample;
         const dims = frameRef.current;
         if (!dims || phaseRef.current !== "pointing") return;
         if (busyRef.current) {
@@ -142,7 +141,7 @@ export default function AutopsyPage() {
         setDwellProgress(res.progress);
         if (res.fired !== null) {
           const word = wordsRef.current.find((w) => w.key === res.fired);
-          if (word) void handleWordFired(word);
+          if (word) void coachWord(word);
         }
       },
     });
@@ -153,13 +152,16 @@ export default function AutopsyPage() {
     installAudioUnlock();
     primeSpeech();
     SessionLogger.start("autopsy").then((l) => (logger.current = l));
+    const micStart = setTimeout(() => void toggleMic(), 0);
     return () => {
-      traceRun.current++;
+      clearTimeout(micStart);
+      listenerRef.current?.stop();
+      listenerRef.current = null;
       stopLoop();
-      stopSpeaking();
-      void endTraceMode();
+      stopAllAudio();
       if (autoScanTimer.current) clearTimeout(autoScanTimer.current);
     };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
   function scheduleAutoScan() {
@@ -172,15 +174,14 @@ export default function AutopsyPage() {
   async function rescan() {
     if (scanningRef.current) return;
     scanningRef.current = true;
-    traceRun.current++; // cancel any trace in progress
     stopLoop();
-    stopSpeaking();
+    stopAllAudio();
     busyRef.current = false;
     frameRef.current = null;
     wordsRef.current = [];
     setFrame(null);
     setWords([]);
-    setStuckBoth(null);
+    setStuck(null);
     setChunks([]);
     setActiveChunk(-1);
     setHoverKey(null);
@@ -212,7 +213,7 @@ export default function AutopsyPage() {
       setFrame(captured);
       setWords(allWords);
       setPhaseBoth("pointing");
-      setStatus("Point at the word you're stuck on and hold still.");
+      setStatus("Point just under the word you're stuck on and hold still.");
       startLoop();
     } catch (err) {
       console.error(err);
@@ -222,35 +223,48 @@ export default function AutopsyPage() {
     }
   }
 
-  async function handleWordFired(word: WordEntry) {
-    if (busyRef.current || phaseRef.current !== "pointing") return;
-    if (stuckRef.current?.key !== word.key) {
-      // First dwell: speak that word only (verbatim), log stuck_word.
-      busyRef.current = true;
-      setStuckBoth(word);
-      setChunks([]);
-      setActiveChunk(-1);
-      logger.current?.log({ type: "stuck_word", word: normalizeWord(word.text) });
-      setStatus(`“${word.text}” — keep pointing at it to sound it out.`);
-      try {
-        await speak(word.text);
-      } catch (err) {
-        console.error("TTS failed:", err);
-      }
-      busyRef.current = false;
-      // Keep-pointing escalation: the same word may fire again immediately.
-      dwellRef.current.rearm(word.key);
-      return;
+  /**
+   * Coach a word: fixed template, spoken twice (amended rule 4 — TTS speaks
+   * the verbatim word + deterministic syllables, never isolated phonemes).
+   */
+  async function coachWord(word: WordEntry) {
+    if (busyRef.current || phaseRef.current === "coaching") return;
+    busyRef.current = true;
+    setPhaseBoth("coaching");
+    setStuck(word);
+    lastWordRef.current = word;
+    setChunks([]);
+    setActiveChunk(-1);
+
+    const normalized = normalizeWord(word.text);
+    logger.current?.log({ type: "stuck_word", word: normalized });
+    if (normalized && !practiceRef.current.some((p) => normalizeWord(p.text) === normalized)) {
+      practiceRef.current.push({ text: word.text, box: word.box });
+      setPracticedCount(practiceRef.current.length);
     }
-    await soundOut(word);
+    setStatus(`“${word.text}” — listen…`);
+
+    try {
+      const lines = coachingLines(word.text);
+      if (lines.length > 0) {
+        await speakSteps(lines, undefined, 500); // two rounds, natural pause
+      } else {
+        await speak(word.text); // numbers/symbols: just say it
+      }
+    } catch (err) {
+      console.error("coaching TTS failed:", err);
+    }
+    busyRef.current = false;
+    setPhaseBoth("pointing");
+    setStatus("Point at another word — or say “sound it out” for letter sounds.");
   }
 
-  async function soundOut(word: WordEntry) {
-    setPhaseBoth("sounding");
+  /** Static-bank phoneme sweep (§7 rule 4 path) — voice command "sound it out". */
+  async function phonemeSweep(word: WordEntry) {
+    if (busyRef.current) return;
     busyRef.current = true;
-    stopLoop(); // pointing pauses; the trace loop takes over afterwards
-    setHoverKey(null);
-    setDwellProgress(0);
+    setPhaseBoth("sweeping");
+    setStuck(word);
 
     const wordChunks = chunksFor(word.text);
     const pattern = chunkPattern(wordChunks);
@@ -262,111 +276,98 @@ export default function AutopsyPage() {
     });
     setStatus("Listen and watch each part light up…");
 
-    // Static phoneme bank ONLY (§7 rule 4). All clips are decoded up front
-    // and scheduled back-to-back on the WebAudio clock — no loading gaps.
-    // The TTS blend is synthesized in parallel so it follows seamlessly.
-    const blendJob = synthesizeSpeech(word.text).catch(() => null);
-    const buffers = await Promise.all(
-      wordChunks.map((ch) => loadClip(`/phonemes/${ch.phonemeId}.mp3`)),
-    );
-    const seq = playSequence(buffers, {
-      gapMs: 60,
-      missingMs: 300,
-      onClipStart: (i) => setActiveChunk(i),
-    });
-    await seq.done;
-    setActiveChunk(-1);
-
-    // Blend: the whole word once via TTS (allowed — it's a whole word).
-    await blendJob; // ensure the buffer is ready → gapless transition
     try {
-      await speak(word.text);
+      const buffers = await Promise.all(
+        wordChunks.map((ch) => loadClip(`/phonemes/${ch.phonemeId}.mp3`)),
+      );
+      const seq = playSequence(buffers, {
+        gapMs: 60,
+        missingMs: 300,
+        onClipStart: (i) => setActiveChunk(i),
+      });
+      sweepRef.current = seq;
+      await seq.done;
+      setActiveChunk(-1);
+      await speak(word.text); // blend: the whole word once (allowed)
     } catch (err) {
-      console.error("TTS blend failed:", err);
+      console.error("phoneme sweep failed:", err);
     }
-
-    busyRef.current = false;
-    await startTrace(word, pattern);
-  }
-
-  async function startTrace(word: WordEntry, pattern: string) {
-    setPhaseBoth("tracing");
-    announce("Now trace it on your paper."); // §7 rule 6
-    setStatus("Trace the word on your paper with your finger, left to right…");
-
-    const run = ++traceRun.current;
-    // startTrace only runs from the user-initiated sound-out flow, never render.
-    // eslint-disable-next-line react-hooks/purity
-    const started = performance.now();
-    const samples: Point[] = [];
-    const dims = frameRef.current!;
-
-    const finish = async (ok: boolean) => {
-      traceRun.current++;
-      if (ok) {
-        playChime();
-        logger.current?.log({
-          type: "trace_complete",
-          word: normalizeWord(word.text),
-          grapheme: pattern,
-        });
-        announce("Well done!");
-        setStatus("Traced! Point at another word when you're ready.");
-      } else {
-        setStatus("Let's stop there — point at a word to try again.");
-      }
-      resumePointing();
-    };
-
-    const tick = async () => {
-      if (traceRun.current !== run) return;
-      if (performance.now() - started > TRACE_TIMEOUT_MS) {
-        await finish(false);
-        return;
-      }
-      const canvas = stage.current?.getCanvas();
-      if (canvas) {
-        try {
-          const sample = await detectFingertipVideo(canvas, performance.now());
-          if (sample) {
-            samples.push({ x: sample.x * dims.width, y: sample.y * dims.height });
-            if (traceSatisfied(samples, word.box)) {
-              await finish(true);
-              return;
-            }
-          }
-        } catch (err) {
-          console.error("trace detection failed:", err);
-        }
-      }
-      if (traceRun.current === run) setTimeout(() => void tick(), TRACE_SAMPLE_MS);
-    };
-    void tick();
-  }
-
-  /** Back to pointing on the SAME scan — no re-capture needed. */
-  function resumePointing() {
-    setStuckBoth(null);
+    sweepRef.current = null;
     setChunks([]);
-    setActiveChunk(-1);
-    if (frameRef.current && wordsRef.current.length > 0) {
-      setPhaseBoth("pointing");
-      startLoop();
-    } else {
-      setPhaseBoth("live");
+    busyRef.current = false;
+    setPhaseBoth("pointing");
+    setStatus("Point at another word — or say “sound it out” for letter sounds.");
+  }
+
+  /** The word under the finger right now (voice-triggered, no dwell wait). */
+  function pointedWord(): WordEntry | null {
+    const dims = frameRef.current;
+    const tipNow = lastTipRef.current;
+    if (!dims || !tipNow) return null;
+    return selectWordAt(
+      { x: tipNow.x * dims.width, y: tipNow.y * dims.height },
+      wordsRef.current,
+    );
+  }
+
+  async function handleUtterance(text: string) {
+    const cmd = await resolveVoiceCommand(text);
+    // While the app is talking, the mic hears its own voice — only "stop"
+    // gets through.
+    if (busyRef.current && cmd.intent !== "stop") return;
+    switch (cmd.intent) {
+      case "stuck_word":
+      case "read": {
+        const word = pointedWord() ?? lastWordRef.current;
+        if (word) void coachWord(word);
+        else setStatus("Point your finger at the word first.");
+        break;
+      }
+      case "sound_out": {
+        const word = pointedWord() ?? lastWordRef.current;
+        if (word) void phonemeSweep(word);
+        else setStatus("Point at a word first, then say “sound it out”.");
+        break;
+      }
+      case "repeat": {
+        const word = lastWordRef.current;
+        if (word) void coachWord(word);
+        break;
+      }
+      case "stop":
+        stopAllAudio();
+        break;
+      case "rescan":
+        void rescan();
+        break;
+      default:
+        break;
     }
   }
 
-  function skipTrace() {
-    traceRun.current++;
-    setStatus("Skipped tracing. Point at another word when you're ready.");
-    resumePointing();
+  async function toggleMic() {
+    if (listenerRef.current) {
+      listenerRef.current.stop();
+      listenerRef.current = null;
+      setListening(false);
+      return;
+    }
+    try {
+      listenerRef.current = await startVoiceListener({
+        onUtterance: (t) => void handleUtterance(t),
+        onState: setListening,
+      });
+    } catch {
+      setListening(false);
+      setStatus("Mic unavailable — pointing still works.");
+    }
   }
 
   async function endSession() {
-    traceRun.current++;
+    listenerRef.current?.stop();
+    listenerRef.current = null;
     stopLoop();
-    stopSpeaking();
+    stopAllAudio();
     const l = logger.current;
     const sessionId = l?.sessionId;
     await l?.end();
@@ -388,7 +389,7 @@ export default function AutopsyPage() {
           ←
         </Link>
         <h1 className="font-display text-lg font-extrabold">Stuck-Word Autopsy</h1>
-        <span className="stamp stamp-det">Recorded phonemes · zero AI</span>
+        <span className="stamp stamp-det">Syllables by rule · zero AI voice</span>
       </header>
 
       <CameraStage
@@ -396,21 +397,21 @@ export default function AutopsyPage() {
         onError={setStatus}
         onReady={scheduleAutoScan}
         onSourceChange={() => {
-          traceRun.current++;
           stopLoop();
+          stopAllAudio();
           frameRef.current = null;
           wordsRef.current = [];
           setFrame(null);
           setWords([]);
-          setStuckBoth(null);
+          setStuck(null);
           setChunks([]);
           setPhaseBoth("live");
           scheduleAutoScan();
         }}
       >
-        {/* Word outlines — aim guides (visual only; selection is by pointing). */}
+        {/* Word outlines — aim guides (selection is by pointing). */}
         {frame &&
-          (phase === "pointing" || phase === "sounding" || phase === "tracing") &&
+          phase !== "live" &&
           words.map((w) => {
             const xs = w.box.map(([x]) => x);
             const ys = w.box.map(([, y]) => y);
@@ -455,7 +456,7 @@ export default function AutopsyPage() {
           />
         )}
 
-        {/* Fingertip pointer. */}
+        {/* Pointed-spot dot. */}
         {tip && (
           <div
             className="absolute h-3.5 w-3.5 -translate-x-1/2 -translate-y-1/2 rounded-full border-2 border-white bg-[var(--pen)] shadow"
@@ -464,29 +465,34 @@ export default function AutopsyPage() {
         )}
       </CameraStage>
 
+      <div className="flex flex-wrap items-center gap-1.5">
+        <span className="chip !py-1 !text-[11px]">📚 practiced: {practicedCount}</span>
+        <button
+          onClick={() => void toggleMic()}
+          className={`chip ml-auto !py-1 !text-[12px] ${listening ? "chip-mic" : "chip-off"}`}
+          aria-pressed={listening}
+        >
+          {listening ? "mic on" : "mic off"}
+        </button>
+      </div>
+
       <div className="flex gap-2">
-        {phase === "tracing" ? (
-          <button onClick={skipTrace} className="btn btn-ghost flex-1 !py-2.5 text-base">
-            Skip tracing
-          </button>
-        ) : (
-          <button
-            onClick={() => void rescan()}
-            disabled={phase === "sounding"}
-            className="btn btn-hl flex-1 !py-2.5 text-base"
-          >
-            ⟳ Rescan page
-          </button>
-        )}
+        <button
+          onClick={() => void rescan()}
+          disabled={phase === "coaching" || phase === "sweeping"}
+          className="btn btn-hl flex-1 !py-2.5 text-base"
+        >
+          ⟳ Rescan page
+        </button>
         <button onClick={() => void endSession()} className="btn btn-ink flex-1 !py-2.5 text-base">
           End session
         </button>
       </div>
 
-      <div className="card flex min-h-0 flex-col gap-1.5 overflow-y-auto p-2.5">
+      <div className="card flex min-h-0 flex-col gap-1 overflow-y-auto p-2.5">
         <p className="text-sm leading-snug text-[var(--ink)]">{status}</p>
         <p className="mono-hint">
-          point at a word · hold to hear it · keep pointing to sound it out
+          point just under a word · hold still · say “I&apos;m stuck” or “sound it out”
         </p>
       </div>
     </main>

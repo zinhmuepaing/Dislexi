@@ -286,7 +286,16 @@ export async function runTutor(
   return parseSteps(fullText, lineMap.length > 0 ? lineMap : undefined);
 }
 
-const VOICE_INTENTS = new Set(["read", "set_scope", "stuck_word", "repeat", "stop", "rescan", "none"]);
+const VOICE_INTENTS = new Set([
+  "read",
+  "set_scope",
+  "stuck_word",
+  "sound_out",
+  "repeat",
+  "stop",
+  "rescan",
+  "none",
+]);
 const VOICE_SCOPES = new Set(["word", "sentence", "paragraph"]);
 
 /**
@@ -302,9 +311,10 @@ export async function parseVoiceCommand(utterance: string): Promise<VoiceIntent>
     system:
       "Classify a primary-school student's spoken request in a point-and-read app. " +
       "The student points a finger at worksheet text; the app can read what is pointed at, " +
-      "change the reading scope, help with a stuck word, repeat, stop speaking, or rescan the page. " +
+      "change the reading scope, help with a stuck word, sound a word out letter by letter, " +
+      "repeat, stop speaking, or rescan the page. " +
       "Utterances contain fillers and varied phrasing. Respond with STRICT JSON only: " +
-      '{"intent":"read|set_scope|stuck_word|repeat|stop|rescan|none","scope":"word|sentence|paragraph"} ' +
+      '{"intent":"read|set_scope|stuck_word|sound_out|repeat|stop|rescan|none","scope":"word|sentence|paragraph"} ' +
       '— "scope" only when the student names a unit. Unclear or off-topic speech → {"intent":"none"}.',
     messages: [{ role: "user", content: utterance.slice(0, 300) }],
   });

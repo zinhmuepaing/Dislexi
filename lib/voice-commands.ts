@@ -12,7 +12,15 @@
 export type ReadScope = "word" | "sentence" | "paragraph";
 
 export interface VoiceIntent {
-  intent: "read" | "set_scope" | "stuck_word" | "repeat" | "stop" | "rescan" | "none";
+  intent:
+    | "read"
+    | "set_scope"
+    | "stuck_word"
+    | "sound_out"
+    | "repeat"
+    | "stop"
+    | "rescan"
+    | "none";
   scope?: ReadScope;
 }
 
@@ -37,6 +45,11 @@ function scopeIn(utterance: string): ReadScope | undefined {
 export function fastParseCommand(raw: string): VoiceIntent | null {
   const u = raw.toLowerCase().trim();
   if (!u) return null;
+
+  // Sound-out (autopsy phoneme sweep): "sound it out".
+  if (/\bsound (it|this|that|the word)? ?out\b/.test(u)) {
+    return { intent: "sound_out" };
+  }
 
   // Stuck word (autopsy): "I'm stuck on this word", "what is this word".
   if (/\bstuck\b/.test(u) || /\bwhat('s| is) (this|that) word\b/.test(u)) {
