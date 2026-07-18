@@ -31,6 +31,7 @@ import { coachingLines } from "@/lib/syllables";
 import { saidWordMatches } from "@/lib/text-match";
 import { resolveVoiceCommand } from "@/lib/voice-commands";
 import { startVoiceListener, VoiceListener } from "@/lib/stt";
+import { LottieBadge } from "@/components/LottieBadge";
 
 interface WordEntry extends OcrBox {
   key: string;
@@ -756,6 +757,7 @@ export default function AutopsyPage() {
 
             {quiz.stage === "done" && (
               <>
+                <LottieBadge src="/lottie/star-pop.json" className="mx-auto h-20 w-20" />
                 <h2 className="font-display text-lg font-extrabold">
                   {quiz.results.filter((r) => r.said === true).length} of{" "}
                   {quiz.results.filter((r) => !r.skipped).length} said right! 🎉

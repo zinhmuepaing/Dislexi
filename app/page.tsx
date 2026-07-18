@@ -9,6 +9,7 @@
 
 import { useEffect, useState } from "react";
 import Link from "next/link";
+import { LottieBadge } from "@/components/LottieBadge";
 
 const KARAOKE_WORDS = "Find the perimeter of the rectangle below.".split(" ");
 
@@ -50,9 +51,14 @@ export default function ModeSelector() {
 
   return (
     <main className="mx-auto flex min-h-dvh w-full max-w-md flex-col gap-2.5 p-4 pb-4">
-      <header className="pt-2">
+      <header className="relative pt-2">
+        {/* Animated pointer accent (original CC0 Lottie, self-hosted). */}
+        <LottieBadge
+          src="/lottie/pointer-bounce.json"
+          className="pointer-events-none absolute -top-1 right-0 h-16 w-16"
+        />
         <p className="eyebrow mb-1.5">Tech4City 2026 · Assistive Reading</p>
-        <h1 className="font-display text-2xl font-extrabold leading-[1.12] tracking-tight">
+        <h1 className="font-display max-w-[19ch] text-2xl font-extrabold leading-[1.12] tracking-tight">
           Homework help that <span className="swipe">reads the rules</span>, then teaches the
           word.
         </h1>
