@@ -2,19 +2,18 @@
 
 /**
  * AI Tutoring (ARCHITECTURE.md §8): question (voice — auto-sent on silence —
- * or text, the permanent §9.5 fallback) → capture+freeze (§7 rule 2) → OCR
- * line map → POST /api/tutor (SSE) → THINKING state (raw model output is
- * NEVER rendered) → narrate each step via Azure TTS with its region + visual
- * aids highlighted on the frozen frame in sync.
+ * or text) → capture+freeze (§7 rule 2) → OCR line map → POST /api/tutor
+ * (SSE) → THINKING state (raw model output is NEVER rendered) → narrate each
+ * step via Azure TTS while its WORKING is drawn on the frozen frame in sync.
  *
- * HIGHLIGHT ACCURACY: the client sends the OCR line map (normalized boxes)
- * with the request; the model anchors steps to line indices + phrases and
- * the server resolves them to rects DETERMINISTICALLY from OCR geometry —
- * the model never emits coordinates. Aids (box/circle/arrow between
- * anchors) render as SVG overlays.
+ * DeskTutor-style on-paper working (2026-07-19): steps carry anchored aids —
+ * circles/boxes/arrows AND "write" labels that print the calculation right on
+ * the worksheet (e.g. "=9/12" beside 3/4). The model anchors to OCR
+ * line+phrase; the server resolves rects deterministically, so marks land on
+ * the exact spot.
  *
- * Narration plays through the shared WebAudio context (lib/audio.ts): all
- * step buffers are synthesized up front and played back-to-back.
+ * Text explanations are HIDDEN by default (visual + audio first); a toggle
+ * reveals the per-step sentences.
  */
 
 import { useEffect, useRef, useState } from "react";
@@ -33,9 +32,10 @@ interface TutorRegion {
 }
 
 interface TutorAid {
-  kind: "box" | "circle" | "arrow";
+  kind: "box" | "circle" | "arrow" | "write";
   region: TutorRegion;
   to?: TutorRegion;
+  text?: string;
 }
 
 interface TutorStep {
@@ -57,89 +57,116 @@ interface TutorTurn {
 
 const THINKING_LINES = [
   "reading your worksheet…",
-  "thinking through the steps…",
-  "matching each step to the page…",
+  "working through the steps…",
+  "writing it on the page…",
   "almost there…",
 ];
 
-/** SVG aid overlays (normalized coords → 0-100 viewBox, stretched). */
+/** Intersection-over-union of two normalized rects. */
+function iou(a: TutorRegion, b: TutorRegion): number {
+  const x1 = Math.max(a.x, b.x);
+  const y1 = Math.max(a.y, b.y);
+  const x2 = Math.min(a.x + a.w, b.x + b.w);
+  const y2 = Math.min(a.y + a.h, b.y + b.h);
+  const inter = Math.max(0, x2 - x1) * Math.max(0, y2 - y1);
+  if (inter <= 0) return 0;
+  return inter / (a.w * a.h + b.w * b.h - inter);
+}
+
+/** SVG shapes + HTML text labels drawn on the frozen frame for a step. */
 function AidsOverlay({ region, aids }: { region: TutorRegion | null; aids: TutorAid[] }) {
+  // Drop a shape aid that sits on the same spot as the step's yellow region
+  // (S3: the oval and the rectangle must not mark the exact same place).
+  const shapeAids = aids.filter(
+    (a) => a.kind === "arrow" || a.kind === "write" || !region || iou(a.region, region) < 0.55,
+  );
+  const writes = shapeAids.filter((a) => a.kind === "write");
+
   return (
-    <svg
-      className="absolute inset-0 h-full w-full"
-      viewBox="0 0 100 100"
-      preserveAspectRatio="none"
-      aria-hidden
-    >
-      <defs>
-        <marker id="aid-arrow" viewBox="0 0 10 10" refX="8" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse">
-          <path d="M 0 1 L 9 5 L 0 9 z" fill="var(--pen)" />
-        </marker>
-      </defs>
-      {region && (
-        <rect
-          x={region.x * 100}
-          y={region.y * 100}
-          width={region.w * 100}
-          height={region.h * 100}
-          rx={1}
-          fill="rgba(255,211,77,0.35)"
-          stroke="var(--hl-strong)"
-          strokeWidth={2}
-          vectorEffect="non-scaling-stroke"
-        />
-      )}
-      {aids.map((aid, i) => {
-        const r = aid.region;
-        const cx = (r.x + r.w / 2) * 100;
-        const cy = (r.y + r.h / 2) * 100;
-        if (aid.kind === "circle") {
-          return (
-            <ellipse
-              key={i}
-              cx={cx}
-              cy={cy}
-              rx={(r.w / 2) * 100 * 1.35 + 1}
-              ry={(r.h / 2) * 100 * 1.6 + 1}
-              fill="none"
-              stroke="var(--pen)"
-              strokeWidth={2.5}
-              vectorEffect="non-scaling-stroke"
-            />
-          );
-        }
-        if (aid.kind === "box") {
-          return (
-            <rect
-              key={i}
-              x={r.x * 100}
-              y={r.y * 100}
-              width={r.w * 100}
-              height={r.h * 100}
-              rx={1}
-              fill="none"
-              stroke="var(--pen)"
-              strokeWidth={2.5}
-              vectorEffect="non-scaling-stroke"
-            />
-          );
-        }
-        const to = aid.to!;
-        return (
-          <line
-            key={i}
-            x1={cx}
-            y1={cy}
-            x2={(to.x + to.w / 2) * 100}
-            y2={(to.y + to.h / 2) * 100}
-            stroke="var(--pen)"
-            strokeWidth={2.5}
+    <>
+      <svg className="absolute inset-0 h-full w-full" viewBox="0 0 100 100" preserveAspectRatio="none" aria-hidden>
+        <defs>
+          <marker id="aid-arrow" viewBox="0 0 10 10" refX="8" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse">
+            <path d="M 0 1 L 9 5 L 0 9 z" fill="var(--point)" />
+          </marker>
+        </defs>
+        {region && (
+          <rect
+            x={region.x * 100}
+            y={region.y * 100}
+            width={region.w * 100}
+            height={region.h * 100}
+            rx={1}
+            fill="rgba(255,211,77,0.32)"
+            stroke="var(--hl-strong)"
+            strokeWidth={2}
             vectorEffect="non-scaling-stroke"
-            markerEnd="url(#aid-arrow)"
           />
-        );
-      })}
-    </svg>
+        )}
+        {shapeAids.map((aid, i) => {
+          const r = aid.region;
+          const cx = (r.x + r.w / 2) * 100;
+          const cy = (r.y + r.h / 2) * 100;
+          if (aid.kind === "circle") {
+            return (
+              <ellipse
+                key={i}
+                cx={cx}
+                cy={cy}
+                rx={(r.w / 2) * 100 * 1.35 + 1}
+                ry={(r.h / 2) * 100 * 1.6 + 1}
+                fill="none"
+                stroke="var(--point)"
+                strokeWidth={2.5}
+                vectorEffect="non-scaling-stroke"
+              />
+            );
+          }
+          if (aid.kind === "box") {
+            return (
+              <rect
+                key={i}
+                x={r.x * 100}
+                y={r.y * 100}
+                width={r.w * 100}
+                height={r.h * 100}
+                rx={1}
+                fill="none"
+                stroke="var(--point)"
+                strokeWidth={2.5}
+                vectorEffect="non-scaling-stroke"
+              />
+            );
+          }
+          if (aid.kind === "arrow" && aid.to) {
+            return (
+              <line
+                key={i}
+                x1={cx}
+                y1={cy}
+                x2={(aid.to.x + aid.to.w / 2) * 100}
+                y2={(aid.to.y + aid.to.h / 2) * 100}
+                stroke="var(--point)"
+                strokeWidth={2.5}
+                vectorEffect="non-scaling-stroke"
+                markerEnd="url(#aid-arrow)"
+              />
+            );
+          }
+          return null;
+        })}
+      </svg>
+      {/* "write" labels as HTML so text isn't stretched by the SVG scaling. */}
+      {writes.map((aid, i) => (
+        <span
+          key={`w${i}`}
+          className="fadein absolute -translate-y-full whitespace-nowrap rounded bg-white/85 px-1 font-display text-[3.2vw] font-extrabold leading-tight text-[var(--point)] shadow-sm sm:text-sm"
+          style={{ left: `${(aid.region.x + aid.region.w) * 100}%`, top: `${aid.region.y * 100}%` }}
+        >
+          {aid.text}
+        </span>
+      ))}
+    </>
   );
 }
 
@@ -161,6 +188,7 @@ export default function TutoringPage() {
   const [thinkingLine, setThinkingLine] = useState(0);
   const [errorMsg, setErrorMsg] = useState<string | null>(null);
   const [listening, setListening] = useState(false);
+  const [showText, setShowText] = useState(false); // text hidden by default (S7)
 
   async function toggleMic() {
     if (listenerRef.current) {
@@ -179,12 +207,9 @@ export default function TutoringPage() {
     }
   }
 
-  /** Spoken question → auto-submit on silence (no Ask button needed). */
   async function handleUtterance(text: string) {
-    // Ignore while the model is thinking or the app is talking (the mic
-    // hears the narration itself); typing stays available throughout.
     if (busyRef.current || narratingRef.current) return;
-    if (text.trim().split(/\s+/).length < 2) return; // noise guard
+    if (text.trim().split(/\s+/).length < 2) return;
     setQuestion(text);
     await ask(text);
   }
@@ -194,7 +219,6 @@ export default function TutoringPage() {
     installAudioUnlock();
     primeSpeech();
     SessionLogger.start("tutoring").then((l) => (logger.current = l));
-    // Endless mic on entry: speak a question, it sends itself on silence.
     const micStart = setTimeout(() => void toggleMic(), 0);
     return () => {
       clearTimeout(micStart);
@@ -205,14 +229,12 @@ export default function TutoringPage() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
-  // Rotate the friendly thinking lines while waiting on the model.
   useEffect(() => {
     if (!busy) return;
     const t = setInterval(() => setThinkingLine((i) => (i + 1) % THINKING_LINES.length), 2200);
     return () => clearInterval(t);
   }, [busy]);
 
-  /** OCR the frozen frame once → normalized line map (reused by follow-ups). */
   async function ensureLines(captured: CapturedFrame): Promise<TutorLine[]> {
     if (linesRef.current) return linesRef.current;
     try {
@@ -222,9 +244,7 @@ export default function TutoringPage() {
         body: JSON.stringify({ imageBase64: captured.base64 }),
       });
       if (!res.ok) throw new Error(`ocr ${res.status}`);
-      const data = (await res.json()) as {
-        blocks?: { text: string; box: [number, number][] }[];
-      };
+      const data = (await res.json()) as { blocks?: { text: string; box: [number, number][] }[] };
       const lines: TutorLine[] = (data.blocks ?? []).map((b, i) => {
         const xs = b.box.map(([x]) => x);
         const ys = b.box.map(([, y]) => y);
@@ -254,8 +274,6 @@ export default function TutoringPage() {
     const q = (text ?? question).trim();
     if (!q || busyRef.current) return;
 
-    // Freeze one frame per interaction (§7 rule 2). Follow-ups reuse the
-    // frozen frame so anchors keep referring to the same image.
     const captured = frameRef.current ?? stage.current?.captureFrame() ?? null;
     if (!captured) return;
     stopSpeaking();
@@ -298,13 +316,7 @@ export default function TutoringPage() {
         for (const f of frames) {
           const payload = f.replace(/^data: /, "").trim();
           if (!payload || payload === "[DONE]") continue;
-          const msg = JSON.parse(payload) as {
-            delta?: string;
-            steps?: TutorStep[];
-            error?: string;
-          };
-          // NOTE: msg.delta (raw model output) is deliberately NOT rendered —
-          // the UI shows the friendly thinking state until steps arrive.
+          const msg = JSON.parse(payload) as { delta?: string; steps?: TutorStep[]; error?: string };
           if (msg.steps) finalSteps = msg.steps;
           if (msg.error) throw new Error(msg.error);
         }
@@ -320,7 +332,6 @@ export default function TutoringPage() {
       if (finalSteps.length === 0) {
         setErrorMsg("I couldn't work that one out — try asking in a different way.");
       } else {
-        // Pre-synthesized, gapless narration; highlight + aids per step.
         narratingRef.current = true;
         void speakSteps(
           finalSteps.map((s) => s.say),
@@ -338,7 +349,6 @@ export default function TutoringPage() {
     }
   }
 
-  /** New photo: unfreeze and start a fresh conversation about a new frame. */
   function retake() {
     stopSpeaking();
     narratingRef.current = false;
@@ -355,18 +365,16 @@ export default function TutoringPage() {
   const active = activeStep >= 0 ? steps[activeStep] : null;
 
   return (
-    // h-dvh + capped camera; the step list scrolls INTERNALLY so the input
-    // row and hints never leave the viewport.
-    <main className="mx-auto flex h-dvh w-full max-w-md flex-col gap-2.5 p-3">
+    <main className="mx-auto flex h-dvh w-full max-w-md flex-col gap-2 overflow-hidden p-3">
       <header className="flex flex-wrap items-center gap-x-2.5 gap-y-1">
         <Link href="/" className="btn btn-ghost !px-2.5 !py-1 text-sm" aria-label="Back to features">
           ←
         </Link>
         <h1 className="font-display text-lg font-extrabold">AI Tutoring</h1>
-        <span className="stamp stamp-ai">AI explains here — never in Exam-Prep</span>
+        <span className="stamp stamp-ai">AI explains here</span>
       </header>
 
-      <CameraStage ref={stage}>
+      <CameraStage ref={stage} maxHeightClass="max-h-[50dvh]">
         {active && <AidsOverlay region={active.region} aids={active.aids ?? []} />}
       </CameraStage>
 
@@ -376,7 +384,7 @@ export default function TutoringPage() {
           onChange={(e) => setQuestion(e.target.value)}
           onKeyDown={(e) => e.key === "Enter" && void ask()}
           placeholder={listening ? "Just speak — or type here…" : "Ask about the worksheet…"}
-          className="min-w-0 flex-1 rounded-[10px] border-[1.5px] border-[var(--ink)] bg-white p-3 text-[15px] placeholder:text-[var(--ink-soft)] focus:outline-[3px] focus:outline-[var(--pen)]"
+          className="min-w-0 flex-1 rounded-[10px] border-[1.5px] border-[var(--ink)] bg-white p-2.5 text-[15px] placeholder:text-[var(--ink-soft)] focus:outline-[3px] focus:outline-[var(--point)]"
         />
         <button
           onClick={() => void toggleMic()}
@@ -392,7 +400,7 @@ export default function TutoringPage() {
       </div>
 
       {busy && (
-        <div className="card fadein flex items-center gap-3 p-4" role="status" aria-live="polite">
+        <div className="card fadein flex items-center gap-3 p-3" role="status" aria-live="polite">
           <span className="flex gap-1.5" aria-hidden>
             <span className="think-dot" />
             <span className="think-dot" />
@@ -402,46 +410,82 @@ export default function TutoringPage() {
         </div>
       )}
 
-      {errorMsg && !busy && (
-        <div className="card fadein border-[var(--margin)] p-4 text-sm">{errorMsg}</div>
-      )}
+      {errorMsg && !busy && <div className="card fadein border-[var(--margin)] p-3 text-sm">{errorMsg}</div>}
 
       {steps.length > 0 && !busy && (
-        <ol className="flex min-h-0 flex-1 flex-col gap-2 overflow-y-auto">
-          {steps.map((s, i) => (
-            <li key={i} className="fadein">
-              <button
-                onClick={() => {
-                  stopSpeaking();
-                  narratingRef.current = true;
-                  setActiveStep(i);
-                  void speak(s.say)
-                    .catch(() => {})
-                    .finally(() => {
-                      narratingRef.current = false;
-                    });
-                }}
-                className={`card w-full p-3 text-left text-sm transition-transform active:translate-y-px ${
-                  i === activeStep ? "!border-[var(--hl-strong)] bg-[rgba(255,211,77,0.18)]" : ""
-                }`}
-              >
-                <span className="mono-hint mr-2 !text-[var(--pen)]">Step {i + 1}</span>
-                {s.say}
-              </button>
-            </li>
-          ))}
-        </ol>
+        <div className="flex min-h-0 flex-1 flex-col gap-1.5">
+          <div className="flex items-center justify-between">
+            <span className="mono-hint">
+              step {activeStep >= 0 ? activeStep + 1 : 1} of {steps.length} · watch the paper
+            </span>
+            <button
+              onClick={() => setShowText((v) => !v)}
+              className="chip !py-1 !text-[11px]"
+              aria-pressed={showText}
+            >
+              {showText ? "hide text" : "show text"}
+            </button>
+          </div>
+
+          {showText ? (
+            <ol className="flex min-h-0 flex-1 flex-col gap-1.5 overflow-y-auto">
+              {steps.map((s, i) => (
+                <li key={i} className="fadein">
+                  <button
+                    onClick={() => {
+                      stopSpeaking();
+                      narratingRef.current = true;
+                      setActiveStep(i);
+                      void speak(s.say)
+                        .catch(() => {})
+                        .finally(() => {
+                          narratingRef.current = false;
+                        });
+                    }}
+                    className={`card w-full p-2.5 text-left text-sm ${
+                      i === activeStep ? "!border-[var(--hl-strong)] bg-[rgba(255,211,77,0.18)]" : ""
+                    }`}
+                  >
+                    <span className="mono-hint mr-2 !text-[var(--point)]">Step {i + 1}</span>
+                    {s.say}
+                  </button>
+                </li>
+              ))}
+            </ol>
+          ) : (
+            // Text hidden: compact dot stepper; the working shows on the paper.
+            <div className="flex flex-wrap items-center gap-1.5">
+              {steps.map((s, i) => (
+                <button
+                  key={i}
+                  onClick={() => {
+                    stopSpeaking();
+                    narratingRef.current = true;
+                    setActiveStep(i);
+                    void speak(s.say)
+                      .catch(() => {})
+                      .finally(() => {
+                        narratingRef.current = false;
+                      });
+                  }}
+                  className={`h-8 w-8 rounded-full border-[1.5px] border-[var(--ink)] font-mono text-xs font-semibold ${
+                    i === activeStep ? "bg-[var(--hl)]" : "bg-white"
+                  }`}
+                  aria-label={`Step ${i + 1}`}
+                >
+                  {i + 1}
+                </button>
+              ))}
+            </div>
+          )}
+        </div>
       )}
 
-      <div className="card mt-auto flex flex-col gap-1 p-2.5">
-        <p className="mono-hint">
-          {listening
-            ? "speak your question — it sends itself when you pause"
-            : "mic is off — type your question and tap Ask"}
-        </p>
+      <div className="mt-auto flex items-center justify-between">
+        <span className="mono-hint">ask by voice or typing · the working appears on the paper</span>
         {frame && (
-          <button onClick={retake} className="mono-hint self-start underline">
-            📷 new photo / new question
+          <button onClick={retake} className="mono-hint underline">
+            📷 new
           </button>
         )}
       </div>

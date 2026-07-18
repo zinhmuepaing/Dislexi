@@ -275,6 +275,23 @@ const box = (l: number, t: number, r: number, b: number): [number, number][] => 
   assert.equal(anchored[0].aids?.length, 2);
   assert.equal(anchored[0].aids?.[1].kind, "arrow");
   assert.ok(anchored[0].aids?.[1].to); // arrow resolved its target
+
+  // "write" aid: draws short working text on the paper at an anchor.
+  const withWrite = parseSteps(
+    JSON.stringify({
+      steps: [
+        {
+          say: "Convert it.",
+          anchor: { line: 0, phrase: "3/4" },
+          aids: [{ kind: "write", line: 0, phrase: "3/4", text: "=9/12 long overflow" }],
+        },
+      ],
+    }),
+    lines,
+  );
+  assert.equal(withWrite[0].aids?.[0].kind, "write");
+  assert.equal(withWrite[0].aids?.[0].text, "=9/12 long"); // trimmed to 10 chars
+  assert.ok(withWrite[0].aids?.[0].region); // resolved from the anchor
   // Unknown line index → falls back to the (clamped) raw region.
   const fallback = parseSteps(
     '{"steps":[{"say":"Hi","anchor":{"line":9},"region":{"x":0.2,"y":0.2,"w":0.1,"h":0.1}}]}',

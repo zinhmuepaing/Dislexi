@@ -46,10 +46,12 @@ export interface TutorRegion {
 
 /** Visual aid drawn on the frozen frame while a step narrates. */
 export interface TutorAid {
-  kind: "box" | "circle" | "arrow";
+  kind: "box" | "circle" | "arrow" | "write";
   region: TutorRegion;
   /** Arrow target (arrows point region → to). */
   to?: TutorRegion;
+  /** For "write": short text drawn on the paper near the anchor (the working). */
+  text?: string;
 }
 
 export interface TutorStep {
@@ -78,12 +80,15 @@ Respond with STRICT JSON only — no prose, no markdown fences, nothing outside 
 
 When the user message includes a WORKSHEET LINES list (index: text), DO NOT estimate coordinates. Anchor every step to a listed line instead:
 
-{"steps":[{"say":"<one short spoken sentence>","anchor":{"line":3,"phrase":"3/4"},"aids":[{"kind":"circle","line":3,"phrase":"3/4"},{"kind":"arrow","line":3,"phrase":"3/4","toLine":5,"toPhrase":"9/12"}]}]}
+{"steps":[{"say":"<one short spoken sentence>","anchor":{"line":3,"phrase":"3/4"},"aids":[{"kind":"circle","line":3,"phrase":"3/4"},{"kind":"write","line":3,"phrase":"3/4","text":"=9/12"},{"kind":"arrow","line":3,"phrase":"3/4","toLine":5,"toPhrase":"blank"}]}]}
 
 Anchor rules:
 - "line": the index from the WORKSHEET LINES list the step talks about.
 - "phrase": the EXACT characters copied from that line that the step refers to (a number, a word, a blank). Omit "phrase" to mean the whole line.
-- "aids": optional, at most 2 per step — "box" or "circle" marks an anchor; "arrow" points from the aid's anchor to "toLine"/"toPhrase". Use aids when they genuinely help (circle the numbers being compared, arrow from a value to where it goes).
+- "aids": optional, at most 3 per step. Draw the WORKING directly on the paper like a teacher would:
+  - "circle" or "box" marks an anchor (circle the numbers being compared).
+  - "write" prints a SHORT text (≤10 chars) on the paper next to its anchor — use it to show the actual working (e.g. text "=9/12", "×3", "12", a carry). This is the most important aid: SHOW the calculation on the page, do not just talk about it.
+  - "arrow" points from its anchor to "toLine"/"toPhrase".
 
 Only when NO lines list is provided, fall back to:
 
@@ -171,21 +176,27 @@ export function parseSteps(raw: string, lines?: TutorLine[]): TutorStep[] {
 
       const aids: TutorAid[] = [];
       if (lines?.length && Array.isArray(step.aids)) {
-        for (const a of step.aids.slice(0, 2)) {
+        for (const a of step.aids.slice(0, 3)) {
           const aid = a as {
             kind?: unknown;
             line?: unknown;
             phrase?: unknown;
             toLine?: unknown;
             toPhrase?: unknown;
+            text?: unknown;
           };
-          if (aid.kind !== "box" && aid.kind !== "circle" && aid.kind !== "arrow") continue;
+          if (aid.kind !== "box" && aid.kind !== "circle" && aid.kind !== "arrow" && aid.kind !== "write")
+            continue;
           const r = resolveAnchor(aid.line, aid.phrase, lines);
           if (!r) continue;
           if (aid.kind === "arrow") {
             const to = resolveAnchor(aid.toLine, aid.toPhrase, lines);
             if (!to) continue;
             aids.push({ kind: aid.kind, region: r, to });
+          } else if (aid.kind === "write") {
+            const text = String(aid.text ?? "").trim().slice(0, 10);
+            if (!text) continue;
+            aids.push({ kind: aid.kind, region: r, text });
           } else {
             aids.push({ kind: aid.kind, region: r });
           }
