@@ -36,7 +36,10 @@ export async function POST(req: NextRequest) {
     await sendDocument(chatId, xlsx, `session-stats-${stamp}.xlsx`, "Session statistics (XLSX)");
   } catch (err) {
     console.error("/api/report-upload delivery failed:", err);
-    return NextResponse.json({ error: "Telegram delivery failed" }, { status: 502 });
+    // Pass the real reason through (Telegram description / config error) so
+    // the client can show something actionable instead of a blind failure.
+    const detail = err instanceof Error ? err.message : String(err);
+    return NextResponse.json({ error: "Telegram delivery failed", detail }, { status: 502 });
   }
 
   return NextResponse.json({ delivered: true });

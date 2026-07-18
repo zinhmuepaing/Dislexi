@@ -55,6 +55,10 @@ export default function StatsPage() {
     if (!stats) return;
     const mk = (key: ChartKey, config: ChartConfiguration) => {
       const canvas = canvasRefs.current[key];
+      // Cap the canvas backing resolution (phones default to DPR 3): the
+      // chart canvases are embedded in the PDF, and an oversized report hits
+      // Vercel's 4.5 MB request-body limit (413) on /api/report-upload.
+      config.options = { ...config.options, devicePixelRatio: 2 };
       if (canvas) chartsRef.current.push(new Chart(canvas, config));
     };
 
@@ -158,7 +162,7 @@ export default function StatsPage() {
     return wb;
   }, [stats, sessionId]);
 
-  const buildPdf = useCallback((): jsPDF => {
+  const buildPdf = useCallback((jpegQuality = 0.82): jsPDF => {
     const pdf = new jsPDF({ unit: "mm", format: "a4" });
     const pageW = pdf.internal.pageSize.getWidth();
     let y = 15;
@@ -174,7 +178,7 @@ export default function StatsPage() {
     y += 8;
     for (const { key, title } of CHARTS) {
       const canvas = canvasRefs.current[key];
-      if (!canvas) continue;
+      if (!canvas || canvas.width === 0) continue;
       const imgW = pageW - 28;
       const imgH = (canvas.height / canvas.width) * imgW;
       if (y + imgH + 6 > pdf.internal.pageSize.getHeight() - 10) {
@@ -184,7 +188,9 @@ export default function StatsPage() {
       pdf.setFontSize(12);
       pdf.text(title, 14, y);
       y += 4;
-      pdf.addImage(canvas.toDataURL("image/png"), "PNG", 14, y, imgW, imgH);
+      // JPEG (charts are flat color on white) — PNG at phone DPR made the
+      // upload exceed Vercel's 4.5 MB body limit → 413 → "Delivery failed".
+      pdf.addImage(canvas.toDataURL("image/jpeg", jpegQuality), "JPEG", 14, y, imgW, imgH);
       y += imgH + 8;
     }
     return pdf;
@@ -195,20 +201,39 @@ export default function StatsPage() {
     setDelivery("Sending…");
     try {
       const xlsxData = XLSX.write(buildXlsx(), { type: "array", bookType: "xlsx" });
+      const xlsxBlob = new Blob([xlsxData], {
+        type: "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+      });
+
+      // Stay under Vercel's 4.5 MB request-body limit: retry at a lower
+      // JPEG quality if the first render is still too heavy.
+      let pdfBlob = buildPdf().output("blob");
+      if (pdfBlob.size + xlsxBlob.size > 4_000_000) {
+        pdfBlob = buildPdf(0.55).output("blob");
+      }
+
       const form = new FormData();
-      form.append("pdf", buildPdf().output("blob"), "report.pdf");
-      form.append(
-        "xlsx",
-        new Blob([xlsxData], {
-          type: "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
-        }),
-        "stats.xlsx",
-      );
+      form.append("pdf", pdfBlob, "report.pdf");
+      form.append("xlsx", xlsxBlob, "stats.xlsx");
       form.append("sessionId", sessionId);
       const res = await fetch("/api/report-upload", { method: "POST", body: form });
-      setDelivery(res.ok ? "Delivered to Telegram." : "Delivery failed (Telegram configured?).");
-    } catch {
-      setDelivery("Delivery failed.");
+      if (res.ok) {
+        setDelivery("Delivered to Telegram.");
+      } else if (res.status === 413) {
+        setDelivery("Delivery failed: the report is too large to upload.");
+      } else {
+        let detail = "";
+        try {
+          const j = (await res.json()) as { error?: string; detail?: string };
+          detail = j.detail ?? j.error ?? "";
+        } catch {
+          /* non-JSON error body */
+        }
+        setDelivery(`Delivery failed (HTTP ${res.status})${detail ? `: ${detail}` : ""}`);
+      }
+    } catch (err) {
+      console.error("report delivery failed:", err);
+      setDelivery("Delivery failed: network error — check the connection and retry.");
     }
   }
 
