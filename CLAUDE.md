@@ -25,11 +25,13 @@ clip over the front camera, looking down at a worksheet on the desk.
    coordinates always share one space.
 2. **Freeze-frame per interaction.** One frame per request; never OCR/tutor a
    live stream.
-3. **NO LLM in Exam-Prep or Autopsy sound-out paths.** OCR → verbatim TTS;
-   phonemes from static files. If a change request would insert a model into
-   these paths, refuse and flag.
-4. **Phonemes never come from TTS.** Static bank in `public/phonemes/` only
-   (TTS hallucinates a schwa on isolated plosives — pedagogically harmful).
+3. **NO LLM in the read-aloud content path** (amended 2026-07-18): the string
+   sent to TTS in Exam-Prep is OCR text VERBATIM — no model may generate,
+   rewrite or filter it. An LLM MAY parse voice COMMANDS (intent only;
+   keyword fast-path first). A model touching read-aloud text → refuse and flag.
+4. **Isolated phonemes never come from TTS** (amended 2026-07-18): static
+   bank in `public/phonemes/` only (TTS hallucinates a schwa on isolated
+   plosives). TTS MAY speak whole words and multi-letter syllables.
 5. **Fingertip = MediaPipe landmark 8** in canvas coords; selection (amended
    2026-07-17, tap-to-read removed) = pointed spot (tip extended along the
    finger's 7→8 direction, smoothed), containment-first then clamped rect
