@@ -1,5 +1,34 @@
 # PROGRESS.md — Dislexi build session log
 
+## RESUME FROM HERE (2026-07-19, sixth session — Telegram + redesign P0/P1)
+
+Done + committed this session (build + eslint + logic-tests green each):
+- **Item 1 (truncation)**: tutoring "write" labels centered over the word,
+  clamped in-frame, wrap instead of clipping ("sin y…" fixed). Camera width
+  folds into the redesign's edge-to-edge (P2).
+- **Item 4 (Telegram summary)**: `summarizeStudyPatterns` emits emoji-led,
+  no-markdown sections + `stripMarkdown()` net. Verified live.
+- **Item 5 (group chat)**: webhook handles groups — @mention/command gate
+  (privacy mode ON is correct → NO BotFather action), `classifyGroupRequest`
+  routes free-text (review/report/help/refuse), every reply tags the asker.
+  `botUsername()` via getMe / `TELEGRAM_BOT_USERNAME`. Verified live.
+- **REWORK 3 P0/P1 (premium hybrid iOS, team-approved)**: Inter+Bricolage+
+  Plex Mono, lucide-react; globals.css glass/press/accent tokens over the
+  KEPT paper base; `BottomNav` — glass 4-tab bar (Home · Insights · Scan
+  center sheet · Settings), hides inside tools. Insights/Settings are
+  placeholder shells.
+
+**NEXT — REWORK 3 remaining (plan: IMPLEMENTATION_PLAN.md top section):**
+- P2 edge-to-edge camera + floating glass controls (also finishes item 1
+  camera-width). ⚠ keep overlay coord alignment when switching to object-cover.
+- P3 replace all emojis with Lucide icons across pages.
+- P4 Insights tab full parity (date-range reviews + AI summary via new
+  /api/review, quiz scores, send-to-parent; absorb the stats page).
+- P5 Settings tab (TTS voice/rate → lib/speech, default scope, camera
+  defaults; localStorage).
+- P6 micro-interactions + glass polish.
+- Future (documented): Full iOS makeover (drop paper base) + dark mode.
+
 ## RESUME FROM HERE (2026-07-19, fifth session — REWORK 2 S0–S8 complete)
 
 Second on-device test round. All S-phases landed; build + eslint (0/0) +
