@@ -237,7 +237,9 @@ export default function AutopsyPage() {
     if (!shot) return null;
     const lineMarks = buildLineMarks(blocksRef.current);
     if (lineMarks.length === 0) return null;
-    const marked = await drawMarks(shot.base64, lineMarks, {
+    // Marks go on the hand-free SCAN frame; the live shot stays clean —
+    // annotating the shot painted chips over the pointing hand (two-photo mode).
+    const marked = await drawMarks(dims.base64, lineMarks, {
       width: dims.width,
       height: dims.height,
     });
@@ -245,7 +247,8 @@ export default function AutopsyPage() {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({
-        imageBase64: marked,
+        imageBase64: shot.base64,
+        markedBase64: marked,
         marks: lineMarks.map(({ n, text }) => ({ n, text })),
       }),
     });
