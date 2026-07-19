@@ -14,6 +14,7 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import Link from "next/link";
 import { useParams } from "next/navigation";
+import { ChevronLeft, Send } from "lucide-react";
 import Chart from "chart.js/auto";
 import type { ChartConfiguration } from "chart.js";
 import * as XLSX from "xlsx";
@@ -241,8 +242,8 @@ export default function StatsPage() {
     return (
       <main className="mx-auto w-full max-w-md p-4 pt-5">
         <header className="flex items-center gap-3">
-          <Link href="/" className="btn btn-ghost !px-3 !py-1.5 text-sm" aria-label="Home">
-            ←
+          <Link href="/" className="press glass flex h-9 w-9 items-center justify-center rounded-full" aria-label="Home">
+            <ChevronLeft size={20} color="var(--ink)" />
           </Link>
           <h1 className="font-display text-xl font-extrabold">Session stats</h1>
         </header>
@@ -254,8 +255,8 @@ export default function StatsPage() {
   return (
     <main className="mx-auto flex w-full max-w-md flex-1 flex-col gap-4 p-4 pt-5">
       <header className="flex flex-wrap items-center gap-x-3 gap-y-2">
-        <Link href="/" className="btn btn-ghost !px-3 !py-1.5 text-sm" aria-label="Home">
-          ←
+        <Link href="/" className="press glass flex h-9 w-9 items-center justify-center rounded-full" aria-label="Home">
+          <ChevronLeft size={20} color="var(--ink)" />
         </Link>
         <h1 className="font-display text-xl font-extrabold">Session stats</h1>
         <span className="stamp stamp-ok">Indicators — not assessments</span>
@@ -315,8 +316,11 @@ export default function StatsPage() {
             <button onClick={() => buildPdf().save("session-report.pdf")} className="btn btn-ghost">
               Download PDF
             </button>
-            <button onClick={() => void sendToParent()} className="btn btn-hl">
-              📨 Send to parent (Telegram)
+            <button
+              onClick={() => void sendToParent()}
+              className="btn-accent press flex items-center justify-center gap-1.5 py-3"
+            >
+              <Send size={16} /> Send to parent (Telegram)
             </button>
             {delivery && <p className="text-sm text-[var(--ink-soft)]">{delivery}</p>}
           </div>

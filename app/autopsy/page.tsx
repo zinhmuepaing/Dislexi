@@ -31,7 +31,7 @@ import { saidWordMatches } from "@/lib/text-match";
 import { resolveVoiceCommand } from "@/lib/voice-commands";
 import { startVoiceListener, VoiceListener } from "@/lib/stt";
 import { LottieBadge } from "@/components/LottieBadge";
-import { ChevronLeft, Mic, MicOff, RotateCw, Square, Hand, Volume2, BookOpen } from "lucide-react";
+import { ChevronLeft, Mic, MicOff, RotateCw, Square, Hand, Volume2, BookOpen, Sparkles, Play, Check } from "lucide-react";
 
 interface WordEntry extends OcrBox {
   key: string;
@@ -637,21 +637,26 @@ export default function AutopsyPage() {
 
       {/* End-of-session quiz dialog (R7). */}
       {quiz && (
-        <div className="fixed inset-0 z-30 flex items-end justify-center bg-[rgba(34,48,63,0.35)] p-4 pb-8">
-          <div className="card fadein w-full max-w-md p-4">
+        <div className="fixed inset-0 z-40 flex items-end justify-center bg-[rgba(34,48,63,0.4)] p-4 pb-8">
+          <div className="glass sheet-up w-full max-w-md rounded-3xl p-4">
             {quiz.stage === "offer" && (
               <>
-                <h2 className="font-display text-lg font-extrabold">Quiz time? 🌟</h2>
+                <h2 className="flex items-center gap-2 font-display text-lg font-extrabold">
+                  <Sparkles size={20} color="var(--point)" /> Quiz time?
+                </h2>
                 <p className="mt-1 text-sm text-[var(--ink-soft)]">
                   Test the {practiceRef.current.length}{" "}
                   {practiceRef.current.length === 1 ? "word" : "words"} you practiced? You can skip
                   any word.
                 </p>
                 <div className="mt-3 flex gap-2">
-                  <button onClick={() => void runSayStep(0, [])} className="btn btn-hl flex-1 !py-2.5">
-                    ▶ Start quiz
+                  <button
+                    onClick={() => void runSayStep(0, [])}
+                    className="btn-accent press flex flex-1 items-center justify-center gap-1.5 py-2.5"
+                  >
+                    <Play size={16} /> Start quiz
                   </button>
-                  <button onClick={() => void endSession([])} className="btn btn-ghost flex-1 !py-2.5">
+                  <button onClick={() => void endSession([])} className="btn-soft press flex-1 py-2.5">
                     Skip to results
                   </button>
                 </div>
@@ -664,7 +669,7 @@ export default function AutopsyPage() {
             {(quiz.stage === "say" || quiz.stage === "point") && (
               <>
                 <div className="flex items-baseline gap-2">
-                  <span className="mono-hint !text-[var(--point)]">
+                  <span className="text-[12px] font-semibold text-[var(--point)]">
                     Word {quiz.index + 1} of {practiceRef.current.length}
                   </span>
                   <span className={`stamp ${quiz.stage === "say" ? "stamp-det" : "stamp-ok"}`}>
@@ -680,12 +685,12 @@ export default function AutopsyPage() {
                   <button
                     onClick={() => void checkPointResult(false)}
                     disabled={finding}
-                    className="btn btn-hl mt-3 w-full !py-2.5"
+                    className="btn-accent press mt-3 flex w-full items-center justify-center gap-1.5 py-2.5 disabled:opacity-50"
                   >
-                    {finding ? "Checking…" : "✓ Check where I'm pointing"}
+                    <Check size={18} /> {finding ? "Checking…" : "Check where I’m pointing"}
                   </button>
                 )}
-                <button onClick={skipQuizWord} className="btn btn-ghost mt-2 w-full !py-2">
+                <button onClick={skipQuizWord} className="btn-soft press mt-2 w-full py-2">
                   Skip this word
                 </button>
               </>
@@ -696,13 +701,16 @@ export default function AutopsyPage() {
                 <LottieBadge src="/lottie/star-pop.json" className="mx-auto h-20 w-20" />
                 <h2 className="font-display text-center text-lg font-extrabold">
                   {quiz.results.filter((r) => r.said === true).length} of{" "}
-                  {quiz.results.filter((r) => !r.skipped).length} said right! 🎉
+                  {quiz.results.filter((r) => !r.skipped).length} said right!
                 </h2>
                 <p className="mt-1 text-center text-sm text-[var(--ink-soft)]">
                   Pointed correctly: {quiz.results.filter((r) => r.pointed === true).length} · skipped:{" "}
                   {quiz.results.filter((r) => r.skipped).length}
                 </p>
-                <button onClick={() => void endSession(quiz.results)} className="btn btn-hl mt-3 w-full !py-2.5">
+                <button
+                  onClick={() => void endSession(quiz.results)}
+                  className="btn-accent press mt-3 w-full py-2.5"
+                >
                   See the full results
                 </button>
               </>
