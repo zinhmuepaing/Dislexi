@@ -1,5 +1,37 @@
 # PROGRESS.md — Dislexi build session log
 
+## RESUME FROM HERE (2026-07-19, seventh session — REWORK 3 P0–P6 COMPLETE)
+
+Premium hybrid-iOS redesign (bottom nav + glass + edge-to-edge) is done and
+committed; build + eslint + logic-tests green each phase.
+
+- **P0** Inter + Bricolage + Plex Mono, lucide-react; glass/press/accent
+  tokens over the kept paper base.
+- **P1** BottomNav — glass 4-tab (Home · Insights · Scan center sheet ·
+  Settings); hides inside tools. (⚠ layout imports BottomNav which imports
+  lucide-react → if `node_modules` is out of sync, DEV 404s every route;
+  fix = `npm install`. Not a code bug; fine on Vercel.)
+- **P2** CameraStage `fullBleed` mode: full-screen object-contain canvas +
+  MEASURED overlay rect (ResizeObserver) so highlights stay aligned;
+  exam-prep/tutoring/autopsy have floating glass control panels. Fixes the
+  item-1 camera size/truncation.
+- **P3** all emojis → Lucide; Home has the app-icon slot + "Dislexi" wordmark.
+- **P4** Insights tab = in-app Telegram review parity: `POST /api/review`
+  (reuses computeStats + summarizeStudyPatterns), range picker (7/30/date),
+  AI summary, quiz-score card, send-to-parent. Verified live (230 events).
+- **P5** Settings: voice (5) + speed slider wired into lib/speech via
+  lib/settings (SSML rate, karaoke offset preserved) + default scope.
+- **P6** focus-visible, spring press, glass, sheet animations,
+  reduced-motion.
+
+**NEXT / open:**
+- On-device pass for the whole redesign (camera full-bleed alignment with a
+  real frame; voice-speed feel; glass legibility in sunlight).
+- FUTURE (documented in IMPLEMENTATION_PLAN.md): Full iOS makeover (drop paper
+  base) + dark mode; R9 full-LLM autopsy coaching.
+- Production = push to origin/main (user's call). Reminder: quiz needs the
+  SETUP.md `quiz_result` Supabase migration (already applied by user).
+
 ## RESUME FROM HERE (2026-07-19, sixth session — Telegram + redesign P0/P1)
 
 Done + committed this session (build + eslint + logic-tests green each):

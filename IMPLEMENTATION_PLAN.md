@@ -91,34 +91,34 @@ substitute **Inter + Lucide** (self-hosted / bundled).
 
 Phases (mark as they land):
 
-- [ ] **P0 — Design tokens + deps.** Add `lucide-react`; Inter via next/font
+- [x] **P0 — Design tokens + deps.** Add `lucide-react`; Inter via next/font
   (display weight contrast). Extend `globals.css`: neutral surfaces
   (`--surface`, `--surface-2`), `--glass`/blur utility, spring-press +
   fade-in utilities, #ec4d25 accent — layered over the existing paper base
   (kept). Record plan here.
-- [ ] **P1 — App shell + bottom nav (4 tabs).** A shell with a fixed glass
+- [x] **P1 — App shell + bottom nav (4 tabs).** A shell with a fixed glass
   bottom nav: **Home · Insights · Scan (center) · Settings**. The center
   Scan button opens a glass bottom-sheet tool picker (Exam-Prep · AI
   Tutoring · Stuck-Word Autopsy). Nav shows on Home/Insights/Settings;
   hidden inside a tool (tools are full-screen with a close/back). Routes:
   `/` (Home), `/insights`, `/settings`; Scan = modal, not a route.
-- [ ] **P2 — Edge-to-edge camera + floating glass controls.** CameraStage
+- [x] **P2 — Edge-to-edge camera + floating glass controls.** CameraStage
   gains a full-bleed mode (fills width/height, `object-cover`); controls,
   status, scope chips, and the Read/End buttons float on top in glass
   panels. Applies to exam-prep/tutoring/autopsy — also resolves item 1
   (wider/clearer camera → less truncation). Overlays keep canvas-coord
   alignment (full-bleed uses object-cover; map via the same frame dims).
-- [ ] **P3 — Lucide icons, no emojis.** Replace every emoji (home cards,
+- [x] **P3 — Lucide icons, no emojis.** Replace every emoji (home cards,
   feature pages, nav, dialogs, chips) with Lucide vectors; consistent sizes,
   Inter type with strong header/body weight contrast.
-- [ ] **P4 — Insights tab (full parity).** In-app: date-range reviews
+- [x] **P4 — Insights tab (full parity).** In-app: date-range reviews
   (7/30/pick) with the AI summary (reuse `summarizeStudyPatterns` via a new
   `POST /api/review`), quiz scores, recent sessions; send PDF/XLSX to parent
   (reuse `/api/report-upload`). Absorbs the current stats page.
-- [ ] **P5 — Settings tab.** TTS voice + speaking rate (wire into
+- [x] **P5 — Settings tab.** TTS voice + speaking rate (wire into
   `lib/speech.ts` synth), default reading scope, camera/mirror defaults —
   persisted in localStorage. (AI-parameter tweaks: expose only safe ones.)
-- [ ] **P6 — Micro-interactions + glass polish.** Spring press (scale-down
+- [x] **P6 — Micro-interactions + glass polish.** Spring press (scale-down
   on tap), fade-in for step explanations, backdrop-blur on nav/dialogs/
   bottom-sheet; `prefers-reduced-motion` respected; keyboard focus visible.
 

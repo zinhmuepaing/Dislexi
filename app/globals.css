@@ -334,6 +334,18 @@ body {
   animation: sheet-up 0.28s cubic-bezier(0.22, 1, 0.36, 1);
 }
 
+/* Visible keyboard focus across the hybrid chrome. */
+.press:focus-visible,
+.btn-accent:focus-visible,
+.btn-soft:focus-visible,
+a:focus-visible,
+button:focus-visible,
+input:focus-visible,
+[role="button"]:focus-visible {
+  outline: 3px solid var(--point);
+  outline-offset: 2px;
+}
+
 @media (prefers-reduced-motion: reduce) {
   *,
   *::before,
