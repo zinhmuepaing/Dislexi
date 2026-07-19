@@ -18,6 +18,7 @@
 
 import { useEffect, useRef, useState } from "react";
 import Link from "next/link";
+import { ChevronLeft, Mic, MicOff, Send, Camera, Eye, EyeOff } from "lucide-react";
 import { CameraStage, CameraStageHandle, CapturedFrame } from "@/components/CameraStage";
 import { speak, stopSpeaking, announce, primeSpeech, speakSteps } from "@/lib/speech";
 import { installAudioUnlock } from "@/lib/audio";
@@ -374,130 +375,153 @@ export default function TutoringPage() {
 
   const active = activeStep >= 0 ? steps[activeStep] : null;
 
-  return (
-    <main className="mx-auto flex h-dvh w-full max-w-md flex-col gap-2 overflow-hidden p-3">
-      <header className="flex flex-wrap items-center gap-x-2.5 gap-y-1">
-        <Link href="/" className="btn btn-ghost !px-2.5 !py-1 text-sm" aria-label="Back to features">
-          ←
-        </Link>
-        <h1 className="font-display text-lg font-extrabold">AI Tutoring</h1>
-        <span className="stamp stamp-ai">AI explains here</span>
-      </header>
+  const playStep = (i: number) => {
+    stopSpeaking();
+    narratingRef.current = true;
+    setActiveStep(i);
+    void speak(steps[i].say)
+      .catch(() => {})
+      .finally(() => {
+        narratingRef.current = false;
+      });
+  };
 
-      <CameraStage ref={stage} maxHeightClass="max-h-[50dvh]">
+  return (
+    <main className="fixed inset-0 bg-[var(--ink)]">
+      <CameraStage ref={stage} fullBleed>
         {active && <AidsOverlay region={active.region} aids={active.aids ?? []} />}
       </CameraStage>
 
-      <div className="flex gap-2">
-        <input
-          value={question}
-          onChange={(e) => setQuestion(e.target.value)}
-          onKeyDown={(e) => e.key === "Enter" && void ask()}
-          placeholder={listening ? "Just speak — or type here…" : "Ask about the worksheet…"}
-          className="min-w-0 flex-1 rounded-[10px] border-[1.5px] border-[var(--ink)] bg-white p-2.5 text-[15px] placeholder:text-[var(--ink-soft)] focus:outline-[3px] focus:outline-[var(--point)]"
-        />
-        <button
-          onClick={() => void toggleMic()}
-          className={`btn btn-ghost !px-3.5 ${listening ? "!bg-[var(--hl)]" : ""}`}
-          aria-label={listening ? "Turn microphone off" : "Turn microphone on"}
-          aria-pressed={listening}
+      {/* Top-left: back + title. */}
+      <div className="absolute left-2 top-2 z-10 flex items-center gap-2">
+        <Link
+          href="/"
+          className="press glass flex h-9 w-9 items-center justify-center rounded-full"
+          aria-label="Back to home"
         >
-          {listening ? "🎙" : "🔇"}
-        </button>
-        <button onClick={() => void ask()} disabled={busy || !question.trim()} className="btn btn-hl !px-4">
-          Ask
-        </button>
-      </div>
-
-      {busy && (
-        <div className="card fadein flex items-center gap-3 p-3" role="status" aria-live="polite">
-          <span className="flex gap-1.5" aria-hidden>
-            <span className="think-dot" />
-            <span className="think-dot" />
-            <span className="think-dot" />
-          </span>
-          <span className="mono-hint !text-[12.5px]">{THINKING_LINES[thinkingLine]}</span>
-        </div>
-      )}
-
-      {errorMsg && !busy && <div className="card fadein border-[var(--margin)] p-3 text-sm">{errorMsg}</div>}
-
-      {steps.length > 0 && !busy && (
-        <div className="flex min-h-0 flex-1 flex-col gap-1.5">
-          <div className="flex items-center justify-between">
-            <span className="mono-hint">
-              step {activeStep >= 0 ? activeStep + 1 : 1} of {steps.length} · watch the paper
-            </span>
-            <button
-              onClick={() => setShowText((v) => !v)}
-              className="chip !py-1 !text-[11px]"
-              aria-pressed={showText}
-            >
-              {showText ? "hide text" : "show text"}
-            </button>
-          </div>
-
-          {showText ? (
-            <ol className="flex min-h-0 flex-1 flex-col gap-1.5 overflow-y-auto">
-              {steps.map((s, i) => (
-                <li key={i} className="fadein">
-                  <button
-                    onClick={() => {
-                      stopSpeaking();
-                      narratingRef.current = true;
-                      setActiveStep(i);
-                      void speak(s.say)
-                        .catch(() => {})
-                        .finally(() => {
-                          narratingRef.current = false;
-                        });
-                    }}
-                    className={`card w-full p-2.5 text-left text-sm ${
-                      i === activeStep ? "!border-[var(--hl-strong)] bg-[rgba(255,211,77,0.18)]" : ""
-                    }`}
-                  >
-                    <span className="mono-hint mr-2 !text-[var(--point)]">Step {i + 1}</span>
-                    {s.say}
-                  </button>
-                </li>
-              ))}
-            </ol>
-          ) : (
-            // Text hidden: compact dot stepper; the working shows on the paper.
-            <div className="flex flex-wrap items-center gap-1.5">
-              {steps.map((s, i) => (
-                <button
-                  key={i}
-                  onClick={() => {
-                    stopSpeaking();
-                    narratingRef.current = true;
-                    setActiveStep(i);
-                    void speak(s.say)
-                      .catch(() => {})
-                      .finally(() => {
-                        narratingRef.current = false;
-                      });
-                  }}
-                  className={`h-8 w-8 rounded-full border-[1.5px] border-[var(--ink)] font-mono text-xs font-semibold ${
-                    i === activeStep ? "bg-[var(--hl)]" : "bg-white"
-                  }`}
-                  aria-label={`Step ${i + 1}`}
-                >
-                  {i + 1}
-                </button>
-              ))}
-            </div>
-          )}
-        </div>
-      )}
-
-      <div className="mt-auto flex items-center justify-between">
-        <span className="mono-hint">ask by voice or typing · the working appears on the paper</span>
+          <ChevronLeft size={20} color="var(--ink)" />
+        </Link>
+        <span className="glass rounded-full px-3 py-1.5 text-sm font-semibold text-[var(--ink)]">
+          AI Tutoring
+        </span>
         {frame && (
-          <button onClick={retake} className="mono-hint underline">
-            📷 new
+          <button
+            onClick={retake}
+            className="press glass flex h-9 w-9 items-center justify-center rounded-full"
+            aria-label="New photo"
+          >
+            <Camera size={18} color="var(--ink)" />
           </button>
         )}
+      </div>
+
+      {/* Thinking indicator floats over the camera. */}
+      {busy && (
+        <div className="absolute inset-x-0 top-16 z-10 flex justify-center">
+          <div className="glass flex items-center gap-2 rounded-full px-4 py-2" role="status" aria-live="polite">
+            <span className="flex gap-1.5" aria-hidden>
+              <span className="think-dot" />
+              <span className="think-dot" />
+              <span className="think-dot" />
+            </span>
+            <span className="text-[12.5px] font-medium text-[var(--ink)]">{THINKING_LINES[thinkingLine]}</span>
+          </div>
+        </div>
+      )}
+
+      {/* Bottom floating glass panel. */}
+      <div className="absolute inset-x-0 bottom-0 z-10">
+        <div className="glass mx-auto flex max-h-[54dvh] max-w-md flex-col gap-2 rounded-t-3xl px-4 pb-[max(16px,env(safe-area-inset-bottom))] pt-3">
+          {errorMsg && !busy && (
+            <div className="fadein rounded-xl border border-[var(--margin)] bg-[var(--surface)] p-2.5 text-sm">
+              {errorMsg}
+            </div>
+          )}
+
+          {steps.length > 0 && !busy && (
+            <div className="flex min-h-0 flex-col gap-1.5">
+              <div className="flex items-center justify-between">
+                <span className="text-[12px] font-medium text-[var(--ink-soft)]">
+                  step {activeStep >= 0 ? activeStep + 1 : 1} of {steps.length} · watch the paper
+                </span>
+                <button
+                  onClick={() => setShowText((v) => !v)}
+                  className="press flex items-center gap-1 rounded-full border border-[var(--hairline)] bg-[var(--surface)] px-2.5 py-1 text-[11px] font-medium"
+                  aria-pressed={showText}
+                >
+                  {showText ? <EyeOff size={13} /> : <Eye size={13} />}
+                  {showText ? "hide text" : "show text"}
+                </button>
+              </div>
+
+              {showText ? (
+                <ol className="flex max-h-[26dvh] flex-col gap-1.5 overflow-y-auto">
+                  {steps.map((s, i) => (
+                    <li key={i} className="fadein">
+                      <button
+                        onClick={() => playStep(i)}
+                        className={`w-full rounded-xl border p-2.5 text-left text-sm ${
+                          i === activeStep
+                            ? "border-[var(--hl-strong)] bg-[rgba(255,211,77,0.18)]"
+                            : "border-[var(--hairline)] bg-[var(--surface)]"
+                        }`}
+                      >
+                        <span className="mr-2 text-[12px] font-semibold text-[var(--point)]">Step {i + 1}</span>
+                        {s.say}
+                      </button>
+                    </li>
+                  ))}
+                </ol>
+              ) : (
+                <div className="flex flex-wrap items-center gap-1.5">
+                  {steps.map((s, i) => (
+                    <button
+                      key={i}
+                      onClick={() => playStep(i)}
+                      className={`press h-8 w-8 rounded-full border-[1.5px] text-xs font-semibold ${
+                        i === activeStep
+                          ? "border-[var(--point)] bg-[var(--point)] text-white"
+                          : "border-[var(--hairline)] bg-[var(--surface)] text-[var(--ink)]"
+                      }`}
+                      aria-label={`Step ${i + 1}`}
+                    >
+                      {i + 1}
+                    </button>
+                  ))}
+                </div>
+              )}
+            </div>
+          )}
+
+          {/* Ask row. */}
+          <div className="flex items-center gap-2">
+            <input
+              value={question}
+              onChange={(e) => setQuestion(e.target.value)}
+              onKeyDown={(e) => e.key === "Enter" && void ask()}
+              placeholder={listening ? "Just speak — or type here…" : "Ask about the worksheet…"}
+              className="min-w-0 flex-1 rounded-2xl border border-[var(--hairline)] bg-[var(--surface)] px-3.5 py-2.5 text-[15px] placeholder:text-[var(--ink-soft)] focus:outline-2 focus:outline-[var(--point)]"
+            />
+            <button
+              onClick={() => void toggleMic()}
+              className={`press flex h-11 w-11 items-center justify-center rounded-full ${
+                listening ? "bg-[var(--ok)] text-white" : "bg-[var(--surface)] text-[var(--ink-soft)] border border-[var(--hairline)]"
+              }`}
+              aria-label={listening ? "Turn microphone off" : "Turn microphone on"}
+              aria-pressed={listening}
+            >
+              {listening ? <Mic size={18} /> : <MicOff size={18} />}
+            </button>
+            <button
+              onClick={() => void ask()}
+              disabled={busy || !question.trim()}
+              className="btn-accent press flex h-11 w-11 items-center justify-center disabled:opacity-40"
+              aria-label="Ask"
+            >
+              <Send size={18} />
+            </button>
+          </div>
+        </div>
       </div>
     </main>
   );

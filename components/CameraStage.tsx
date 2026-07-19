@@ -30,6 +30,7 @@ import {
   useRef,
   useState,
 } from "react";
+import { SwitchCamera, FlipHorizontal2 } from "lucide-react";
 
 /** §5.1: compress before upload — target ≤ ~1600px long side, JPEG q≈0.8. */
 const MAX_LONG_SIDE = 1600;
@@ -80,13 +81,19 @@ interface CameraStageProps {
   onReady?: () => void;
   /** Fires when the camera or mirror setting changes (overlays/scans stale). */
   onSourceChange?: () => void;
-  /** Tailwind max-height class for the canvas (viewport-capped). */
+  /** Tailwind max-height class for the canvas (viewport-capped, non-fullBleed). */
   maxHeightClass?: string;
+  /**
+   * Full-bleed: fills the (fixed) parent, canvas object-contain, controls
+   * float on top. The overlay layer is measured to the displayed frame rect
+   * so %-positioned overlays stay aligned with canvas coords (REWORK 3 P2).
+   */
+  fullBleed?: boolean;
 }
 
 export const CameraStage = forwardRef<CameraStageHandle, CameraStageProps>(
   function CameraStage(
-    { children, onError, onReady, onSourceChange, maxHeightClass = "max-h-[54dvh]" },
+    { children, onError, onReady, onSourceChange, maxHeightClass = "max-h-[54dvh]", fullBleed = false },
     ref,
   ) {
     const videoRef = useRef<HTMLVideoElement>(null);
@@ -97,6 +104,34 @@ export const CameraStage = forwardRef<CameraStageHandle, CameraStageProps>(
     const [ready, setReady] = useState(false);
     const [facing, setFacing] = useState<Facing>("user");
     const [mirror, setMirror] = useState(false);
+    // Displayed frame rect (px) inside the object-contain canvas — the overlay
+    // layer is sized to this so %-coords track the visible frame in fullBleed.
+    const [frameRect, setFrameRect] = useState<{ left: number; top: number; width: number; height: number } | null>(null);
+
+    useEffect(() => {
+      if (!fullBleed) return;
+      const compute = () => {
+        const canvas = canvasRef.current;
+        if (!canvas) return;
+        const elW = canvas.clientWidth;
+        const elH = canvas.clientHeight;
+        const cw = canvas.width || 1;
+        const ch = canvas.height || 1;
+        if (elW === 0 || elH === 0) return;
+        const scale = Math.min(elW / cw, elH / ch); // object-contain
+        const w = cw * scale;
+        const h = ch * scale;
+        setFrameRect({ left: (elW - w) / 2, top: (elH - h) / 2, width: w, height: h });
+      };
+      const ro = new ResizeObserver(compute);
+      if (canvasRef.current) ro.observe(canvasRef.current);
+      const id = setInterval(compute, 400); // catch canvas bitmap-size changes
+      compute();
+      return () => {
+        ro.disconnect();
+        clearInterval(id);
+      };
+    }, [fullBleed]);
 
     // Load persisted prefs after mount (SSR-safe).
     useEffect(() => {
@@ -221,46 +256,63 @@ export const CameraStage = forwardRef<CameraStageHandle, CameraStageProps>(
       getCanvas: () => canvasRef.current,
     }));
 
+    // Camera toggles — glass pills that float top-right in both modes.
+    const controls = (
+      <div className="absolute right-2 top-2 z-10 flex gap-1.5">
+        <button
+          onClick={toggleFacing}
+          className="press glass pointer-events-auto flex items-center gap-1 rounded-full px-2.5 py-1.5 text-[11px] font-medium text-[var(--ink)]"
+          aria-label="Switch between front and rear camera"
+        >
+          <SwitchCamera size={14} /> {facing === "user" ? "Front" : "Rear"}
+        </button>
+        <button
+          onClick={toggleMirror}
+          className={`press pointer-events-auto flex items-center gap-1 rounded-full px-2.5 py-1.5 text-[11px] font-medium ${
+            mirror ? "bg-[var(--hl)] text-[var(--ink)]" : "glass text-[var(--ink-soft)]"
+          }`}
+          aria-label="Toggle mirror-clip compensation"
+          aria-pressed={mirror}
+        >
+          <FlipHorizontal2 size={14} /> Mirror {mirror ? "on" : "off"}
+        </button>
+      </div>
+    );
+
+    const notReady = !ready && (
+      <p className="absolute inset-0 flex items-center justify-center text-sm text-white/80">
+        Starting camera…
+      </p>
+    );
+
+    if (fullBleed) {
+      return (
+        <div className="absolute inset-0 overflow-hidden bg-[var(--ink)]">
+          <video ref={videoRef} playsInline muted className="hidden" />
+          {/* Canvas fills the screen, letterboxed (object-contain). */}
+          <canvas ref={canvasRef} className="h-full w-full object-contain" />
+          {/* Overlay layer measured to the displayed frame rect → aligned. */}
+          <div
+            className="pointer-events-none absolute"
+            style={frameRect ?? { inset: 0 }}
+          >
+            {children}
+          </div>
+          {controls}
+          {notReady}
+        </div>
+      );
+    }
+
     return (
-      // Height is viewport-capped (~42dvh) so the controls below the camera
-      // are ALWAYS visible without scrolling on phones. The relative wrapper
-      // shrink-wraps the scaled canvas exactly, so %-positioned overlays stay
-      // aligned with canvas-frame coordinates at any display size.
+      // Non-fullBleed: viewport-capped, shrink-wrapped so overlays align.
       <div className="flex w-full justify-center">
         <div className="relative min-h-[120px] min-w-[240px] w-fit max-w-full overflow-hidden rounded-xl border-[1.5px] border-[var(--ink)] bg-[var(--ink)]">
-          {/* Hidden raw video — never shown or processed directly. */}
           <video ref={videoRef} playsInline muted className="hidden" />
-          {/* The canvas everything sees (step 0 applied when mirror is on). */}
           <canvas ref={canvasRef} className={`block h-auto w-auto max-w-full ${maxHeightClass}`} />
-          {/* Overlay layer (highlights, regions) in canvas-frame space. */}
           <div className="pointer-events-none absolute inset-0">{children}</div>
-
-        {/* Camera controls */}
-        <div className="absolute right-2 top-2 flex gap-1.5">
-          <button
-            onClick={toggleFacing}
-            className="pointer-events-auto rounded-full border-[1.5px] border-[var(--ink)] bg-white/95 px-2.5 py-1 font-mono text-[10px] font-medium text-[var(--ink)] shadow-[2px_2px_0_rgba(34,48,63,0.2)] active:translate-x-px active:translate-y-px active:shadow-none"
-            aria-label="Switch between front and rear camera"
-          >
-            ⟲ {facing === "user" ? "Front" : "Rear"} cam
-          </button>
-          <button
-            onClick={toggleMirror}
-            className={`pointer-events-auto rounded-full border-[1.5px] border-[var(--ink)] px-2.5 py-1 font-mono text-[10px] font-medium shadow-[2px_2px_0_rgba(34,48,63,0.2)] active:translate-x-px active:translate-y-px active:shadow-none ${
-              mirror ? "bg-[var(--hl)] text-[var(--ink)]" : "bg-white/95 text-[var(--ink-soft)]"
-            }`}
-            aria-label="Toggle mirror-clip compensation"
-            aria-pressed={mirror}
-          >
-            Mirror clip {mirror ? "ON" : "OFF"}
-          </button>
-        </div>
-
-          {!ready && (
-            <p className="absolute inset-0 flex items-center justify-center text-sm text-white/80">
-              Starting camera…
-            </p>
-          )}
+          {controls}
+          {notReady}
         </div>
       </div>
     );

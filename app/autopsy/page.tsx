@@ -31,6 +31,7 @@ import { saidWordMatches } from "@/lib/text-match";
 import { resolveVoiceCommand } from "@/lib/voice-commands";
 import { startVoiceListener, VoiceListener } from "@/lib/stt";
 import { LottieBadge } from "@/components/LottieBadge";
+import { ChevronLeft, Mic, MicOff, RotateCw, Square, Hand, Volume2, BookOpen } from "lucide-react";
 
 interface WordEntry extends OcrBox {
   key: string;
@@ -482,20 +483,12 @@ export default function AutopsyPage() {
   const frameH = frame?.height ?? 1;
 
   return (
-    <main className="mx-auto flex h-dvh w-full max-w-md flex-col gap-2 overflow-hidden p-3">
-      <header className="flex flex-wrap items-center gap-x-2.5 gap-y-1">
-        <Link href="/" className="btn btn-ghost !px-2.5 !py-1 text-sm" aria-label="Back to features">
-          ←
-        </Link>
-        <h1 className="font-display text-lg font-extrabold">Stuck-Word Autopsy</h1>
-        <span className="stamp stamp-det">Syllables by rule</span>
-      </header>
-
+    <main className="fixed inset-0 bg-[var(--ink)]">
       <CameraStage
         ref={stage}
+        fullBleed
         onError={setStatus}
         onReady={scheduleAutoScan}
-        maxHeightClass="max-h-[54dvh]"
         onSourceChange={() => {
           stopAllAudio();
           frameRef.current = null;
@@ -568,49 +561,79 @@ export default function AutopsyPage() {
         )}
 
         {finding && (
-          <div className="absolute inset-x-0 bottom-0 flex justify-center pb-2">
-            <span className="chip chip-mic !bg-white/95 !py-1 !text-[11px]">finding your finger…</span>
+          <div className="absolute inset-x-0 top-16 flex justify-center">
+            <span className="glass rounded-full px-3 py-1 text-[12px] font-medium text-[var(--ink)]">
+              finding your finger…
+            </span>
           </div>
         )}
       </CameraStage>
 
-      <div className="flex flex-wrap items-center gap-1.5">
-        <span className="chip !py-1 !text-[11px]">📚 practiced: {practicedCount}</span>
-        <button
-          onClick={() => void toggleMic()}
-          className={`chip ml-auto !py-1 !text-[12px] ${listening ? "chip-mic" : "chip-off"}`}
-          aria-pressed={listening}
+      {/* Top-left: back + title. */}
+      <div className="absolute left-2 top-2 z-10 flex items-center gap-2">
+        <Link
+          href="/"
+          className="press glass flex h-9 w-9 items-center justify-center rounded-full"
+          aria-label="Back to home"
         >
-          {listening ? "mic on" : "mic off"}
-        </button>
+          <ChevronLeft size={20} color="var(--ink)" />
+        </Link>
+        <span className="glass rounded-full px-3 py-1.5 text-sm font-semibold text-[var(--ink)]">
+          Autopsy
+        </span>
+        <span className="glass flex items-center gap-1 rounded-full px-2.5 py-1.5 text-[12px] font-medium text-[var(--ink)]">
+          <BookOpen size={13} /> {practicedCount}
+        </span>
       </div>
 
-      <div className="flex gap-2">
-        <button
-          onClick={() => void pointAndAct("coach")}
-          disabled={finding || phase === "live" || phase === "coaching" || phase === "sweeping"}
-          className="btn btn-hl flex-[2] !py-3 text-base"
-        >
-          {finding ? "Finding…" : "👉 Help me with this word"}
-        </button>
-        <button
-          onClick={() => void pointAndAct("sweep")}
-          disabled={finding || phase === "live" || phase === "coaching" || phase === "sweeping"}
-          className="btn btn-ghost flex-1 !py-3 text-sm"
-        >
-          Sound out
-        </button>
-      </div>
+      {/* Bottom floating glass control panel. */}
+      <div className="absolute inset-x-0 bottom-0 z-10">
+        <div className="glass mx-auto max-w-md rounded-t-3xl px-4 pb-[max(16px,env(safe-area-inset-bottom))] pt-3">
+          <div className="flex gap-2">
+            <button
+              onClick={() => void pointAndAct("coach")}
+              disabled={finding || phase === "live" || phase === "coaching" || phase === "sweeping"}
+              className="btn-accent press flex flex-[2] items-center justify-center gap-2 py-3.5 text-base disabled:opacity-50"
+            >
+              <Hand size={20} />
+              {finding ? "Finding…" : "Help me with this word"}
+            </button>
+            <button
+              onClick={() => void pointAndAct("sweep")}
+              disabled={finding || phase === "live" || phase === "coaching" || phase === "sweeping"}
+              className="btn-soft press flex flex-1 items-center justify-center gap-1.5 py-3.5 text-sm disabled:opacity-50"
+            >
+              <Volume2 size={18} /> Sound out
+            </button>
+          </div>
 
-      <div className="mt-auto flex items-center gap-2">
-        <button onClick={() => void rescan()} className="btn btn-ghost flex-1 !py-2 text-sm">
-          ⟳ Rescan
-        </button>
-        <button onClick={() => void endSession()} className="btn btn-ink flex-1 !py-2 text-sm">
-          End session
-        </button>
+          <div className="mt-2 flex items-center gap-2">
+            <button
+              onClick={() => void toggleMic()}
+              className={`press flex items-center gap-1 rounded-full px-3 py-2 text-[12px] font-medium ${
+                listening ? "bg-[var(--ok)] text-white" : "bg-[var(--surface)] text-[var(--ink-soft)] border border-[var(--hairline)]"
+              }`}
+              aria-pressed={listening}
+            >
+              {listening ? <Mic size={14} /> : <MicOff size={14} />}
+              {listening ? "on" : "off"}
+            </button>
+            <button
+              onClick={() => void rescan()}
+              className="btn-soft press flex flex-1 items-center justify-center gap-1.5 py-2 text-sm"
+            >
+              <RotateCw size={16} /> Rescan
+            </button>
+            <button
+              onClick={() => void endSession()}
+              className="press flex flex-1 items-center justify-center gap-1.5 rounded-2xl bg-[var(--ink)] py-2 text-sm font-semibold text-white"
+            >
+              <Square size={14} /> End
+            </button>
+          </div>
+          <p className="mt-1.5 text-center text-[12px] leading-snug text-[var(--ink-soft)]">{status}</p>
+        </div>
       </div>
-      <p className="mono-hint text-center leading-snug">{status}</p>
 
       {/* End-of-session quiz dialog (R7). */}
       {quiz && (

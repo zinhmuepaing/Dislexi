@@ -23,6 +23,7 @@
 import { useEffect, useRef, useState } from "react";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
+import { ChevronLeft, Mic, MicOff, ScanText, RotateCw, Square } from "lucide-react";
 import { CameraStage, CameraStageHandle, CapturedFrame } from "@/components/CameraStage";
 import { KaraokeHighlight, OcrBox, rectForRange } from "@/components/KaraokeHighlight";
 import { selectWordAt, Point } from "@/lib/hand-tracker";
@@ -397,20 +398,12 @@ export default function ExamPrepPage() {
   const frameH = scan?.frame.height ?? 1;
 
   return (
-    <main className="mx-auto flex h-dvh w-full max-w-md flex-col gap-2 overflow-hidden p-3">
-      <header className="flex flex-wrap items-center gap-x-2.5 gap-y-1">
-        <Link href="/" className="btn btn-ghost !px-2.5 !py-1 text-sm" aria-label="Back to features">
-          ←
-        </Link>
-        <h1 className="font-display text-lg font-extrabold">Exam-Prep</h1>
-        <span className="stamp stamp-det">Reads verbatim</span>
-      </header>
-
+    <main className="fixed inset-0 bg-[var(--ink)]">
       <CameraStage
         ref={stage}
+        fullBleed
         onError={setStatus}
         onReady={scheduleAutoScan}
-        maxHeightClass="max-h-[56dvh]"
         onSourceChange={() => {
           scanRef.current = null;
           setScan(null);
@@ -477,50 +470,84 @@ export default function ExamPrepPage() {
         )}
 
         {finding && (
-          <div className="absolute inset-x-0 bottom-0 flex justify-center pb-2">
-            <span className="chip chip-mic !bg-white/95 !py-1 !text-[11px]">finding your finger…</span>
+          <div className="absolute inset-x-0 top-16 flex justify-center">
+            <span className="glass rounded-full px-3 py-1 text-[12px] font-medium text-[var(--ink)]">
+              finding your finger…
+            </span>
           </div>
         )}
       </CameraStage>
 
-      {/* Reading scope + mic */}
-      <div className="flex flex-wrap items-center gap-1.5">
-        {SCOPES.map((s) => (
-          <button
-            key={s.id}
-            onClick={() => applyScope(s.id)}
-            className={`chip !py-1 !text-[12px] ${scope === s.id ? "!bg-[var(--hl)] font-semibold" : "!bg-white"}`}
-            aria-pressed={scope === s.id}
-          >
-            {s.label}
-          </button>
-        ))}
-        <button
-          onClick={() => void toggleMic()}
-          className={`chip ml-auto !py-1 !text-[12px] ${listening ? "chip-mic" : "chip-off"}`}
-          aria-pressed={listening}
+      {/* Top-left: back + title (camera toggles float top-right inside the stage). */}
+      <div className="absolute left-2 top-2 z-10 flex items-center gap-2">
+        <Link
+          href="/"
+          className="press glass flex h-9 w-9 items-center justify-center rounded-full"
+          aria-label="Back to home"
         >
-          {listening ? "mic on" : "mic off"}
-        </button>
+          <ChevronLeft size={20} color="var(--ink)" />
+        </Link>
+        <span className="glass rounded-full px-3 py-1.5 text-sm font-semibold text-[var(--ink)]">
+          Exam-Prep
+        </span>
       </div>
 
-      <button
-        onClick={() => void readViaPointer()}
-        disabled={finding || !scan}
-        className="btn btn-hl w-full !py-3 text-base"
-      >
-        {finding ? "Finding your finger…" : "👉 Read what I’m pointing at"}
-      </button>
+      {/* Bottom floating glass control panel. */}
+      <div className="absolute inset-x-0 bottom-0 z-10">
+        <div className="glass mx-auto max-w-md rounded-t-3xl px-4 pb-[max(16px,env(safe-area-inset-bottom))] pt-3">
+          <div className="mb-2 flex flex-wrap items-center gap-1.5">
+            {SCOPES.map((s) => (
+              <button
+                key={s.id}
+                onClick={() => applyScope(s.id)}
+                className={`press rounded-full px-3 py-1 text-[12px] font-medium ${
+                  scope === s.id
+                    ? "bg-[var(--point)] text-white"
+                    : "bg-[var(--surface)] text-[var(--ink)] border border-[var(--hairline)]"
+                }`}
+                aria-pressed={scope === s.id}
+              >
+                {s.label}
+              </button>
+            ))}
+            <button
+              onClick={() => void toggleMic()}
+              className={`press ml-auto flex items-center gap-1 rounded-full px-3 py-1 text-[12px] font-medium ${
+                listening ? "bg-[var(--ok)] text-white" : "bg-[var(--surface)] text-[var(--ink-soft)] border border-[var(--hairline)]"
+              }`}
+              aria-pressed={listening}
+            >
+              {listening ? <Mic size={14} /> : <MicOff size={14} />}
+              {listening ? "on" : "off"}
+            </button>
+          </div>
 
-      <div className="mt-auto flex items-center gap-2">
-        <button onClick={() => void rescan()} className="btn btn-ghost flex-1 !py-2 text-sm">
-          ⟳ Rescan
-        </button>
-        <button onClick={() => void endSession()} className="btn btn-ink flex-1 !py-2 text-sm">
-          End session
-        </button>
+          <button
+            onClick={() => void readViaPointer()}
+            disabled={finding || !scan}
+            className="btn-accent press flex w-full items-center justify-center gap-2 py-3.5 text-base disabled:opacity-50"
+          >
+            <ScanText size={20} />
+            {finding ? "Finding your finger…" : "Read what I’m pointing at"}
+          </button>
+
+          <div className="mt-2 flex items-center gap-2">
+            <button
+              onClick={() => void rescan()}
+              className="btn-soft press flex flex-1 items-center justify-center gap-1.5 py-2 text-sm"
+            >
+              <RotateCw size={16} /> Rescan
+            </button>
+            <button
+              onClick={() => void endSession()}
+              className="press flex flex-1 items-center justify-center gap-1.5 rounded-2xl bg-[var(--ink)] py-2 text-sm font-semibold text-white"
+            >
+              <Square size={14} /> End
+            </button>
+          </div>
+          <p className="mt-1.5 text-center text-[12px] leading-snug text-[var(--ink-soft)]">{status}</p>
+        </div>
       </div>
-      <p className="mono-hint text-center leading-snug">{status}</p>
     </main>
   );
 }
