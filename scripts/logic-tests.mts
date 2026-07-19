@@ -19,7 +19,7 @@ import { buildSentences, buildParagraphs, blockToSentenceMap, localWordAt } from
 import { fastParseCommand } from "../lib/voice-commands";
 import { syllablesOf, coachingLines } from "../lib/syllables";
 import { similarity, saidWordMatches, bestWordMatch } from "../lib/text-match";
-import { buildLineMarks, buildWordMarks } from "../lib/marks";
+import { buildLineMarks, buildWordMarks, aboveChipCenterY, ceilingFor } from "../lib/marks";
 import {
   matchLines,
   estimateSimilarity,
@@ -478,6 +478,27 @@ const box = (l: number, t: number, r: number, b: number): [number, number][] => 
   const cleaned = stripMarkdown("## Summary\n\n**Overview**\n\n230 events with `89` reads.");
   assert.ok(!/[*#`]/.test(cleaned));
   assert.ok(cleaned.includes("Overview") && cleaned.includes("230 events"));
+}
+
+// ── marks: above-chip placement stays out of the line above ──────────────────
+{
+  // Roomy: default position just above the word.
+  assert.equal(aboveChipCenterY(100, 10), 100 - 10 - 4);
+  // Tight ceiling (line above ends at y=80; default cy−r would cross it):
+  // chip drops to the midpoint of the gap.
+  assert.equal(aboveChipCenterY(100, 10, 80), (80 + 100) / 2);
+  // Near the frame top: clamped to r + 2.
+  assert.equal(aboveChipCenterY(5, 10), 12);
+
+  // ceilingFor: nearest overlapping text above the line.
+  const blocks = [
+    { box: box(50, 100, 450, 120) }, // line 0
+    { box: box(50, 140, 450, 160) }, // line 1 (its ceiling is line 0's bottom)
+    { box: box(500, 90, 600, 130) }, // side note: no horizontal overlap
+  ];
+  assert.equal(ceilingFor(blocks, 1), 120);
+  assert.equal(ceilingFor(blocks, 0), undefined); // nothing above the first line
+  assert.equal(ceilingFor(blocks, 99), undefined);
 }
 
 // ── align: matchLines — text pairing with reading-order (LIS) filter ─────────

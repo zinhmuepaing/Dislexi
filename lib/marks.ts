@@ -84,6 +84,47 @@ export function buildWordMarks(
 export type MarkPlacement = "left" | "above";
 
 /**
+ * Center-y for an "above" chip: just above the word (top − r − 4). When the
+ * line above is close (`ceiling` = its bottom edge, same space as `top`), the
+ * chip drops to the midpoint of the gap so it cannot cover that line's text
+ * (chip-over-text both hurts legibility and lets the model associate the chip
+ * with the wrong line). Clamped below the frame top. Pure — logic-tested.
+ */
+export function aboveChipCenterY(top: number, r: number, ceiling?: number): number {
+  let cy = top - r - 4;
+  if (ceiling !== undefined && cy - r < ceiling) cy = (ceiling + top) / 2;
+  return Math.max(r + 2, cy);
+}
+
+/**
+ * Bottom edge of the nearest text ABOVE line `blockIndex` that horizontally
+ * overlaps it — the ceiling its word chips must stay below. Pure.
+ */
+export function ceilingFor(
+  blocks: { box: [number, number][] }[],
+  blockIndex: number,
+): number | undefined {
+  const line = blocks[blockIndex];
+  if (!line) return undefined;
+  const xs = line.box.map(([x]) => x);
+  const ys = line.box.map(([, y]) => y);
+  const left = Math.min(...xs);
+  const right = Math.max(...xs);
+  const top = Math.min(...ys);
+  let ceiling: number | undefined;
+  blocks.forEach((b, i) => {
+    if (i === blockIndex) return;
+    const bxs = b.box.map(([x]) => x);
+    const bys = b.box.map(([, y]) => y);
+    const bottom = Math.max(...bys);
+    if ((Math.min(...bys) + bottom) / 2 >= top) return; // not above the line
+    if (Math.max(...bxs) <= left || Math.min(...bxs) >= right) return; // no overlap
+    if (ceiling === undefined || bottom > ceiling) ceiling = bottom;
+  });
+  return ceiling;
+}
+
+/**
  * Composite the numbered chips onto a captured frame. `boxSpace` is the
  * scanned frame's dimensions (the space the OCR boxes live in); the fresh
  * shot is scaled to it, so a camera-resolution change between scan and shot
@@ -91,7 +132,7 @@ export type MarkPlacement = "left" | "above";
  */
 export async function drawMarks(
   shotBase64: string,
-  marks: { n: number; box: [number, number][] }[],
+  marks: { n: number; box: [number, number][]; ceiling?: number }[],
   boxSpace: { width: number; height: number },
   placement: MarkPlacement = "left",
 ): Promise<string> {
@@ -123,10 +164,11 @@ export async function drawMarks(
     let cy: number;
     let r: number;
     if (placement === "above") {
-      // Word chip: smaller, centered above the word; clamped inside the frame.
+      // Word chip: smaller, centered above the word; kept out of the line
+      // above (ceiling, scaled to shot space) and inside the frame.
       r = Math.min(18, Math.max(9, (bottom - top) * 0.55));
       cx = Math.min(canvas.width - r - 2, Math.max(r + 2, (left + right) / 2));
-      cy = Math.max(r + 2, top - r - 4);
+      cy = aboveChipCenterY(top, r, mark.ceiling === undefined ? undefined : mark.ceiling * sy);
     } else {
       // Line chip sits just left of the line; clamped inside the frame.
       r = Math.min(26, Math.max(12, (bottom - top) * 0.75));

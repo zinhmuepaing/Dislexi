@@ -18,7 +18,7 @@
 import type { OcrBox } from "@/components/KaraokeHighlight";
 import type { CameraStageHandle, CapturedFrame } from "@/components/CameraStage";
 import { alignScanToShot, applyToBlocks, applyToBox, IDENTITY } from "@/lib/align";
-import { buildLineMarks, buildWordMarks, drawMarks } from "@/lib/marks";
+import { buildLineMarks, buildWordMarks, ceilingFor, drawMarks } from "@/lib/marks";
 import { bestWordMatch } from "@/lib/text-match";
 
 export interface PointUnit {
@@ -144,7 +144,14 @@ export async function locatePointedUnit(opts: {
           box: alignment.aligned ? applyToBox(alignment.transform, u.box) : u.box,
         })),
       );
-      const wordImage = await drawMarks(shot.base64, wordMarks, boxSpace, "above");
+      // Keep the chips out of the line above at tight line spacing.
+      const ceiling = ceilingFor(alignedBlocks, lineMark.blockIndex);
+      const wordImage = await drawMarks(
+        shot.base64,
+        wordMarks.map((m) => ({ ...m, ceiling })),
+        boxSpace,
+        "above",
+      );
       const wordRes = await fetch("/api/point", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
