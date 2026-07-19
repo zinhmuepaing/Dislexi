@@ -324,13 +324,16 @@ export async function locatePointedMark(
     max_tokens: 120,
     system:
       "You see a photo of a worksheet with a child's hand pointing at the text. " +
-      "Each text line has a numbered circular marker at its left edge; the same " +
-      "numbers with each line's text are listed in the message. Decide which " +
-      "MARKED LINE the finger is pointing at. The finger often covers its target: " +
-      "the intended line is the one the fingertip touches, or the line just beyond " +
-      "the fingernail in the pointing direction — when in doubt between two lines, " +
-      "prefer the one ABOVE the fingertip. Also read the exact single word being " +
-      "pointed at, copied verbatim from the image. Respond with STRICT JSON only: " +
+      "Each text line is covered by a translucent tinted band (colors alternate " +
+      "line to line) and carries the SAME number in a circular chip at BOTH ends " +
+      "of its band; the numbers with each line's text are listed in the message. " +
+      "Decide which numbered LINE the finger is pointing at: find the fingertip, " +
+      "then the band it touches, then that band's chip number — never trace " +
+      "across the page. The finger often covers its target: the intended line is " +
+      "the one the fingertip touches, or the line just beyond the fingernail in " +
+      "the pointing direction — when in doubt between two bands, prefer the one " +
+      "ABOVE the fingertip. Also read the exact single word being pointed at, " +
+      "copied verbatim from the image. Respond with STRICT JSON only: " +
       '{"found":true,"mark":3,"word":"perimeter"} — or {"found":true,"mark":3,"word":null} ' +
       'if the word is unreadable, or {"found":false} if no pointing hand is visible.',
     messages: [
