@@ -9,10 +9,12 @@
  * content). "sound it out" plays the static phoneme bank sweep (§7 rule 4).
  * Practiced words feed the end-of-session quiz (R7).
  *
- * Pointing uses the vision model (2026-07-19, /api/point) — robust to the
- * back-of-hand view the mirror-clip camera sees, unlike MediaPipe. The model
- * locates the finger; the OCR word there is what we coach/quiz. lib/
- * hand-tracker.ts is kept for revert (selectWordAt is reused).
+ * Pointing uses set-of-marks (/api/point {marks}, branch feature/
+ * set-of-marks-pointing): numbered chips are composited on the OCR lines and
+ * the vision model names the marked line + the pointed word (classification,
+ * not coordinate regression — which selected lines below the finger). The
+ * OCR word entry resolved there is what we coach/quiz. Revert paths: the
+ * /api/point coordinate mode and MediaPipe in lib/hand-tracker.ts.
  */
 
 import { useEffect, useRef, useState } from "react";
@@ -22,12 +24,13 @@ import { CameraStage, CameraStageHandle, CapturedFrame } from "@/components/Came
 import { GraphemeSweep } from "@/components/GraphemeSweep";
 import { OcrBox, subBoxFor } from "@/components/KaraokeHighlight";
 import { chunksFor, chunkPattern, normalizeWord, GraphemeChunkDef } from "@/lib/graphemes";
-import { selectWordAt, Point } from "@/lib/hand-tracker";
+import { Point } from "@/lib/hand-tracker";
+import { buildLineMarks, drawMarks } from "@/lib/marks";
 import { speak, speakSteps, stopSpeaking, announce, primeSpeech } from "@/lib/speech";
 import { installAudioUnlock, loadClip, playSequence, playChime, Playback } from "@/lib/audio";
 import { SessionLogger } from "@/lib/event-queue";
 import { coachingLines } from "@/lib/syllables";
-import { saidWordMatches } from "@/lib/text-match";
+import { saidWordMatches, bestWordMatch } from "@/lib/text-match";
 import { resolveVoiceCommand } from "@/lib/voice-commands";
 import { startVoiceListener, VoiceListener } from "@/lib/stt";
 import { LottieBadge } from "@/components/LottieBadge";
@@ -35,6 +38,8 @@ import { ChevronLeft, Mic, MicOff, RotateCw, Square, Hand, Volume2, BookOpen, Sp
 
 interface WordEntry extends OcrBox {
   key: string;
+  /** Index of the OCR line the word came from (set-of-marks resolution). */
+  blockIndex: number;
 }
 
 export interface PracticedWord {
@@ -64,7 +69,9 @@ const QUIZ_SAY_MS = 10_000;
 function wordsOf(block: OcrBox, blockIndex: number, gen: number): WordEntry[] {
   const words: WordEntry[] = [];
   if (block.words && block.words.length > 0) {
-    block.words.forEach((w, i) => words.push({ text: w.text, box: w.box, key: `${gen}:${blockIndex}:w${i}` }));
+    block.words.forEach((w, i) =>
+      words.push({ text: w.text, box: w.box, key: `${gen}:${blockIndex}:w${i}`, blockIndex }),
+    );
     return words;
   }
   const re = /\S+/g;
@@ -80,6 +87,7 @@ function wordsOf(block: OcrBox, blockIndex: number, gen: number): WordEntry[] {
         [r.x, r.y + r.h],
       ],
       key: `${gen}:${blockIndex}:${m.index}`,
+      blockIndex,
     });
   }
   return words;
@@ -102,6 +110,7 @@ export default function AutopsyPage() {
   const scanningRef = useRef(false);
   const findingRef = useRef(false);
   const wordsRef = useRef<WordEntry[]>([]);
+  const blocksRef = useRef<OcrBox[]>([]);
   const frameRef = useRef<CapturedFrame | null>(null);
   const lastWordRef = useRef<WordEntry | null>(null);
   const practiceRef = useRef<PracticedWord[]>([]);
@@ -202,6 +211,7 @@ export default function AutopsyPage() {
         return;
       }
       frameRef.current = captured;
+      blocksRef.current = data.blocks ?? [];
       wordsRef.current = allWords;
       setFrame(captured);
       setWords(allWords);
@@ -215,21 +225,38 @@ export default function AutopsyPage() {
     }
   }
 
-  /** Capture → locate finger (vision) → the OCR word there. */
+  /**
+   * Capture → set-of-marks: chips on the OCR lines, the model names the
+   * marked line + the word it sees pointed → resolve to the OCR word entry
+   * in that line (fuzzy text match; single-word lines need no word answer).
+   */
   async function locateWord(): Promise<WordEntry | null> {
     const dims = frameRef.current;
     if (!dims) return null;
     const shot = stage.current?.captureFrame({ freeze: false });
     if (!shot) return null;
+    const lineMarks = buildLineMarks(blocksRef.current);
+    if (lineMarks.length === 0) return null;
+    const marked = await drawMarks(shot.base64, lineMarks, {
+      width: dims.width,
+      height: dims.height,
+    });
     const res = await fetch("/api/point", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ imageBase64: shot.base64 }),
+      body: JSON.stringify({
+        imageBase64: marked,
+        marks: lineMarks.map(({ n, text }) => ({ n, text })),
+      }),
     });
-    const data = (await res.json()) as { found?: boolean; x?: number; y?: number };
-    if (!data.found || typeof data.x !== "number" || typeof data.y !== "number") return null;
-    setLocated({ x: data.x, y: data.y });
-    return selectWordAt({ x: data.x * dims.width, y: data.y * dims.height }, wordsRef.current);
+    const data = (await res.json()) as { found?: boolean; mark?: number; word?: string | null };
+    const lineMark = data.found ? lineMarks.find((m) => m.n === data.mark) : undefined;
+    if (!lineMark) return null;
+    const inLine = wordsRef.current.filter((w) => w.blockIndex === lineMark.blockIndex);
+    if (inLine.length === 0) return null;
+    if (inLine.length === 1) return inLine[0];
+    const match = bestWordMatch(inLine.map((w) => w.text), data.word ?? null);
+    return match ? inLine[match.index] : null;
   }
 
   /** Trigger: find the pointed word, then coach (default) or sweep. */

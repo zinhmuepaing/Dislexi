@@ -8,16 +8,18 @@
  * only as (a) voice-COMMAND interpreter and (b) VISUAL POINTER — it decides
  * WHICH action / WHERE the finger is, never WHAT text is spoken.
  *
- * Pointing flow (2026-07-19 — replaces MediaPipe, which can't parse the
- * back-of-hand view the mirror-clip camera sees): enter → mic on (endless,
- * silence-chunked; §7 rule 8 transcripts only) → camera ready → AUTO scan
- * (OCR, preview stays live) → say "read this" (or tap Read this) → capture a
- * frame → POST /api/point (vision model returns the fingertip) → map to the
- * nearest OCR word (selectWordAt) → read it verbatim with karaoke highlight →
- * log 'read'/'reread' → … → end session → stats.
+ * Pointing flow (set-of-marks, branch feature/set-of-marks-pointing —
+ * replaces coordinate regression, which selected lines below the finger):
+ * enter → mic on (endless, silence-chunked; §7 rule 8 transcripts only) →
+ * camera ready → AUTO scan (OCR, preview stays live) → say "read this" (or
+ * tap Read this) → capture a frame → composite numbered chips on the OCR
+ * lines (lib/marks.ts) → POST /api/point {marks} (vision model CLASSIFIES
+ * the marked line + reads the pointed word) → resolve unit per scope →
+ * read it verbatim with karaoke highlight → log 'read'/'reread' → … →
+ * end session → stats.
  *
- * The MediaPipe implementation is preserved in lib/hand-tracker.ts for revert
- * (selectWordAt is reused; the continuous dwell loop is simply not started).
+ * Revert paths preserved: /api/point coordinate mode (call without marks) and
+ * the MediaPipe implementation in lib/hand-tracker.ts (dwell loop not started).
  */
 
 import { useEffect, useRef, useState } from "react";
@@ -26,7 +28,9 @@ import { useRouter } from "next/navigation";
 import { ChevronLeft, Mic, MicOff, ScanText, RotateCw, Square } from "lucide-react";
 import { CameraStage, CameraStageHandle, CapturedFrame } from "@/components/CameraStage";
 import { KaraokeHighlight, OcrBox, rectForRange } from "@/components/KaraokeHighlight";
-import { selectWordAt, Point } from "@/lib/hand-tracker";
+import { Point } from "@/lib/hand-tracker";
+import { buildLineMarks, drawMarks } from "@/lib/marks";
+import { bestWordMatch } from "@/lib/text-match";
 import { speak, stopSpeaking, announce, primeSpeech } from "@/lib/speech";
 import { installAudioUnlock } from "@/lib/audio";
 import { SessionLogger } from "@/lib/event-queue";
@@ -253,7 +257,12 @@ export default function ExamPrepPage() {
     }
   }
 
-  /** Capture a frame, locate the fingertip via the vision model, read its word. */
+  /**
+   * Capture a frame, composite numbered chips on the OCR lines, and ask the
+   * vision model WHICH mark the finger points at (set-of-marks — replaces
+   * coordinate regression, which selected lines below the finger). The
+   * model's word answer disambiguates within the line for word scope.
+   */
   async function readViaPointer(scopeOverride?: ReadScope) {
     const current = scanRef.current;
     if (!current || finding) return;
@@ -272,24 +281,28 @@ export default function ExamPrepPage() {
         setStatus("Camera not ready — try again.");
         return;
       }
+      const lineMarks = buildLineMarks(current.blocks);
+      const marked = await drawMarks(shot.base64, lineMarks, {
+        width: current.frame.width,
+        height: current.frame.height,
+      });
       const res = await fetch("/api/point", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ imageBase64: shot.base64 }),
+        body: JSON.stringify({
+          imageBase64: marked,
+          marks: lineMarks.map(({ n, text }) => ({ n, text })),
+        }),
       });
-      const data = (await res.json()) as { found?: boolean; x?: number; y?: number };
-      if (!data.found || typeof data.x !== "number" || typeof data.y !== "number") {
+      const data = (await res.json()) as { found?: boolean; mark?: number; word?: string | null };
+      const lineMark = data.found ? lineMarks.find((m) => m.n === data.mark) : undefined;
+      if (!lineMark) {
         setStatus("I couldn’t see your finger — point clearly at a word and try again.");
         return;
       }
-      setLocated({ x: data.x, y: data.y });
-      const sel = selectWordAt(
-        { x: data.x * current.frame.width, y: data.y * current.frame.height },
-        unitsRef.current.selectables,
-      );
-      const unit = sel ? unitsRef.current.units[sel.unit] : null;
+      const unit = resolveUnit(lineMark.blockIndex, data.word ?? null);
       if (!unit) {
-        setStatus("You’re pointing at a blank area — point at a word.");
+        setStatus("I couldn’t tell which word — point right under it and try again.");
         return;
       }
       await readUnit(unit);
@@ -299,6 +312,19 @@ export default function ExamPrepPage() {
     } finally {
       setFinding(false);
     }
+  }
+
+  /** Marked line + model-read word → the unit to read, per the active scope. */
+  function resolveUnit(blockIndex: number, word: string | null): Sentence | null {
+    const { units } = unitsRef.current;
+    if (scopeRef.current !== "word") {
+      return units.find((u) => u.blockIndices.includes(blockIndex)) ?? null;
+    }
+    const inLine = units.filter((u) => u.blockIndices[0] === blockIndex);
+    if (inLine.length === 0) return null;
+    if (inLine.length === 1) return inLine[0];
+    const match = bestWordMatch(inLine.map((u) => u.text), word);
+    return match ? inLine[match.index] : null;
   }
 
   async function handleUtterance(text: string) {

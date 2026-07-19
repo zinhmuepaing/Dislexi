@@ -37,6 +37,30 @@ export function similarity(a: string, b: string): number {
 }
 
 /**
+ * Best candidate for a word the vision model read off the page (set-of-marks
+ * pointing): highest-similarity candidate at ≥ 0.45, else null. The model and
+ * the OCR saw the same print, so real matches score near 1; the threshold only
+ * rejects hallucinated words. Deterministic — the model picks WHERE, the OCR
+ * text is what gets spoken.
+ */
+export function bestWordMatch(
+  candidates: string[],
+  said: string | null | undefined,
+): { index: number; score: number } | null {
+  if (!said || candidates.length === 0) return null;
+  let index = -1;
+  let score = 0;
+  candidates.forEach((c, i) => {
+    const s = similarity(c, said);
+    if (s > score) {
+      score = s;
+      index = i;
+    }
+  });
+  return index >= 0 && score >= 0.45 ? { index, score } : null;
+}
+
+/**
  * Did the utterance say the word? Accepts the whole utterance, any single
  * token, or an embedded match ("it says awards I think" → true) at ≥ 0.75
  * similarity — tolerant of STT quirks, strict enough to fail wrong words.
