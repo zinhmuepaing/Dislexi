@@ -19,7 +19,7 @@ import { buildSentences, buildParagraphs, blockToSentenceMap, localWordAt } from
 import { fastParseCommand } from "../lib/voice-commands";
 import { syllablesOf, coachingLines } from "../lib/syllables";
 import { similarity, saidWordMatches, bestWordMatch } from "../lib/text-match";
-import { buildLineMarks } from "../lib/marks";
+import { buildLineMarks, buildWordMarks } from "../lib/marks";
 
 const box = (l: number, t: number, r: number, b: number): [number, number][] => [
   [l, t],
@@ -221,6 +221,21 @@ const box = (l: number, t: number, r: number, b: number): [number, number][] => 
     Array.from({ length: 60 }, (_, i) => ({ text: `line ${i}`, box: box(0, i * 20, 100, i * 20 + 15) })),
   );
   assert.equal(many.length, 40); // readability cap
+}
+
+// ── buildWordMarks: word pass numbering skips empties, keeps unit indices ────
+{
+  const words = [
+    { text: "Find", box: box(0, 0, 40, 20) },
+    { text: "", box: box(45, 0, 50, 20) }, // empty → no chip
+    { text: "the", box: box(55, 0, 80, 20) },
+    { text: "perimeter", box: box(85, 0, 160, 20) },
+  ];
+  const wordMarks = buildWordMarks(words);
+  assert.equal(wordMarks.length, 3);
+  assert.deepEqual(wordMarks.map((m) => m.n), [1, 2, 3]); // chips numbered contiguously
+  assert.deepEqual(wordMarks.map((m) => m.unitIndex), [0, 2, 3]); // original indices kept
+  assert.deepEqual(buildWordMarks([]), []);
 }
 
 // ── computeStats: quiz_result aggregation ────────────────────────────────────

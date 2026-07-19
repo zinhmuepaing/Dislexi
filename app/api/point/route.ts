@@ -8,6 +8,10 @@
  *   at (+ the word it sees) instead of regressing coordinates — which was
  *   systematically selecting lines below the finger.
  *
+ *   With { granularity: "word" } the chips sit above each word of one already-
+ *   picked line and the model answers { found: true, mark } only — pure
+ *   classification, no word reading (the fingertip occludes its target).
+ *
  * COORDINATE (legacy/revert path):
  *   { imageBase64 } → { found: true, x, y } | { found: false }
  *
@@ -16,13 +20,13 @@
  */
 
 import { NextRequest, NextResponse } from "next/server";
-import { locatePointer, locatePointedMark } from "@/lib/tutor-model";
+import { locatePointer, locatePointedMark, locatePointedWordMark } from "@/lib/tutor-model";
 
 export const runtime = "nodejs";
 export const maxDuration = 20;
 
 export async function POST(req: NextRequest) {
-  let body: { imageBase64?: unknown; marks?: unknown };
+  let body: { imageBase64?: unknown; marks?: unknown; granularity?: unknown };
   try {
     body = await req.json();
   } catch {
@@ -46,7 +50,10 @@ export async function POST(req: NextRequest) {
 
   try {
     if (marks.length > 0) {
-      const choice = await locatePointedMark(body.imageBase64, marks);
+      const choice =
+        body.granularity === "word"
+          ? await locatePointedWordMark(body.imageBase64, marks)
+          : await locatePointedMark(body.imageBase64, marks);
       return NextResponse.json(choice ? { found: true, ...choice } : { found: false });
     }
     const point = await locatePointer(body.imageBase64);

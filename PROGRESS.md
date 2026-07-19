@@ -1,5 +1,133 @@
 # PROGRESS.md — Dislexi build session log
 
+## RESUME FROM HERE (2026-07-20, ninth session — word-granularity set-of-marks)
+
+Still on **branch `feature/set-of-marks-pointing`**. User confirmed the
+sentence/paragraph (line-level) mis-selection is FIXED on device; the
+remaining bug was WORD scope reading the wrong word — usually the FIRST word
+of the pointed line.
+
+**Root cause (confirmed by code reading, matches user's symptom):** word
+scope relied on `locatePointedMark`'s free-text `word` field — the model
+READING the pointed word off the image. But the fingertip OCCLUDES its
+target, so the model names a legible neighbor (line-initial word: fully
+visible, often capitalized, first in reading order); `bestWordMatch` then
+matches that wrong word with high similarity, so no error surfaces. Same
+generation-vs-classification failure set-of-marks fixed at line level, one
+granularity down.
+
+**Fix delivered — two-pass set-of-marks (word scope only):**
+- Pass 1 unchanged (line chips → `{found, mark, word}`); the `word` field is
+  now DEMOTED to fallback-only.
+- Pass 2 (new): chips composited ABOVE each word of the picked line (finger
+  approaches from below on the desk rig, so above-word chips stay visible
+  while the word itself is covered) → `POST /api/point` with
+  `granularity:"word"` → model answers `{found, mark}` ONLY — pure
+  classification, no word reading. Falls back to `bestWordMatch` on the
+  pass-1 word if the pass fails. Single-word lines skip pass 2.
+- Changes: `buildWordMarks` + `placement: "left" | "above"` in `lib/marks.ts`;
+  `locatePointedWordMark` in `lib/tutor-model.ts` (occlusion prior in prompt:
+  pick the chip AT the fingertip, never the most legible neighbor);
+  `/api/point` accepts `granularity`; exam-prep `resolveUnit` is now async
+  and runs the word pass. Logic tests added for `buildWordMarks`.
+- Compliance unchanged (§7 rule 3): model picks a chip NUMBER; spoken text is
+  OCR verbatim. Coordinate revert path untouched.
+- Cost: word scope now takes a second vision round-trip (~1–2 s extra);
+  sentence/paragraph unaffected.
+
+Gates green: `npx tsx scripts/logic-tests.mts` ✅ · `npx eslint .` ✅ ·
+`npm run build` ✅ · prod-server smoke: /exam-prep renders, only expected
+camera-permission errors in a devices-less browser ✅.
+
+**NEXT:** on-device test of word scope (point mid-line, expect the pointed
+word not the first word); check pass-2 chip legibility on real print (chips
+sit above words — verify they don't collide with the line above at typical
+worksheet line spacing); /api/point latency with two calls. Older open items
+below (eighth session ⚠ drift bug: user says line-level is fixed on device —
+treat that section as resolved unless handheld drift reappears).
+
+## RESUME FROM HERE (2026-07-19, eighth session — set-of-marks pointing branch)
+
+On **branch `feature/set-of-marks-pointing`** (pushed to origin, one commit
+`422b2a6` on top of `main`/`bffc4dd` REWORK 3). `main` untouched. PR not
+opened yet:
+https://github.com/zinhmuepaing/Dislexi/pull/new/feature/set-of-marks-pointing
+After any pull: run `npm install` (team added hypher/lucide/lottie deps;
+missing modules break logic-tests and dev with confusing errors). Gates all
+green at commit time: `npx tsx scripts/logic-tests.mts`, `npx eslint .`,
+`npm run build`.
+
+**What the session delivered — set-of-marks pointing** (fixes `/api/point`
+coordinate regression selecting lines ~2 below the finger; vision LLMs have
+±5–10% coordinate error = 2–3 text lines):
+- `lib/marks.ts` — `buildLineMarks` (pure: number non-empty OCR lines 1..N,
+  cap 40) + `drawMarks` (canvas: composite numbered chips at each line's left
+  edge onto the captured frame, scaled scan-space→shot-space).
+- `locatePointedMark` in `lib/tutor-model.ts` — model gets chipped image +
+  "n: text" list, returns STRICT JSON `{found, mark, word}`; classification
+  not regression; prompt encodes the occlusion prior (prefer line ABOVE the
+  fingertip when in doubt).
+- `/api/point`: `{imageBase64, marks?}` — marks present → marked mode
+  `{found, mark, word}`; absent → legacy coordinate mode (kept as revert path).
+- `bestWordMatch` in `lib/text-match.ts` (pure, ≥0.45 similarity) — resolves
+  the model's word answer against OCR words WITHIN the marked line.
+- Exam-prep `readViaPointer`/`resolveUnit` + autopsy `locateWord` rewired;
+  `WordEntry` gained `blockIndex`; autopsy keeps `blocksRef`. Logic tests
+  added for buildLineMarks + bestWordMatch. Spoken text still OCR-verbatim
+  everywhere (compliance unchanged).
+
+**⚠ OPEN BUG — set-of-marks still mis-selects on device.** User's test video
+(`Downloads/video_2026-07-19_17-14-48.mp4`, phone, rear camera, handheld)
+still reads the wrong line; frame analysis showed the overlay highlight
+sitting ABOVE its text on the live view. Leading hypothesis (unverified):
+`drawMarks` composites chips at SCANNED-frame coordinates onto the FRESH
+shot; handheld, the paper shifts between scan and "read this" → chips land on
+the wrong physical lines → the model correctly names the chip nearest the
+finger, but that chip no longer sits on the line it was numbered for.
+Candidate fixes to evaluate:
+1. Cheapest: detect scan-vs-shot drift (frame-difference or OCR anchor
+   re-check) → auto-rescan before pointing when stale.
+2. Re-OCR the fresh shot on every "read this" and mark THAT (~1s extra, but
+   chips always correct; cache-friendly).
+3. Product answer: the stand fixes the geometry — but demo videos keep being
+   handheld, so software robustness still matters.
+Also check while in there: whether OCR captured the header lines (unmarked
+regions can't be selected), and `/api/point` latency.
+
+**Also done this session (context):**
+- Sentence grouping `lib/sentences.ts` (buildSentences + localWordAt) built
+  here, later extended by the team into the Word/Sentence/Paragraph scope
+  system — now core. Exam-prep dwell 650→300 ms is MOOT (team removed the
+  dwell loop; pointing is on-demand).
+- **Phoneme bank**: 43/43 files, 0 gap-fill, ATTRIBUTIONS.md regenerated, all
+  open-licensed (air/ow = Lingua Libre isolated diphthongs; ae/igh/oa/oi/ear
+  = human recordings of pure-diphthong words). **ae.mp3 must be
+  listen-verified**: needs strong form /eɪ/, not /ə/. User listen-check found
+  the 24 CONSONANT files are IPA demos in vowel contexts ("ba…aba…ab") —
+  pedagogically unusable for blending (the same "buh" problem rule 4 bans TTS
+  for); Commons has NO isolated consonant set (searched thoroughly). No
+  longer demo-blocking (syllable coaching R6 is the primary Autopsy path) —
+  only degrades the optional phoneme sweep. User handling re-recording
+  separately.
+- **Licensing hard line**: user twice offered ripped YouTube audio ("44
+  Phonemes", Farmer Loves Phonics) — refused (Standard YouTube License, no
+  CC). Do NOT use that audio, even "for demo". Legit routes: written
+  permission from the creator, or self-record.
+- Intent-doc review flags: per-letter grapheme fallback teaches wrong phonics
+  for uncurated words; no drift-test for the LLM parent-report language;
+  Telegram PDF never checked to embed only charts (never the worksheet
+  photo). User deferred flags — don't re-raise unprompted. Intent doc is now
+  stale on rules 3/4 — user explicitly said no need to update it.
+
+**Other open items:** on-device validation of the whole P0–P6 redesign +
+/api/point accuracy; consonant phoneme re-recording (user); listen-verify the
+7 diphthong mp3s (esp. ae.mp3); Telegram PDF image-leakage check.
+
+**User context:** records demo videos handheld with the rear camera — expect
+the stale-scan failure mode in every video until fixed. Prefers short direct
+answers; asks "what's your take" before wanting code; wants branches for
+risky work.
+
 ## RESUME FROM HERE (2026-07-19, seventh session — REWORK 3 P0–P6 COMPLETE)
 
 Premium hybrid-iOS redesign (bottom nav + glass + edge-to-edge) is done and
