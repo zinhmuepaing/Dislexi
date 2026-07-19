@@ -369,6 +369,69 @@ export async function locatePointedMark(
   }
 }
 
+/**
+ * SET-OF-MARKS, WORD PASS (two-pass pointing): the frame arrives with small
+ * numbered chips composited ABOVE each word of the already-picked line. Pure
+ * classification — the model names a chip, never reads text: the fingertip
+ * occludes its target word, so asking the model to read it made it name a
+ * legible neighbor (usually the first word of the line) instead.
+ */
+export async function locatePointedWordMark(
+  imageBase64: string,
+  marks: { n: number; text: string }[],
+): Promise<{ mark: number } | null> {
+  const data = imageBase64.replace(/^data:image\/\w+;base64,/, "");
+  const list = marks
+    .slice(0, 60)
+    .map((m) => `${Math.trunc(Number(m.n))}: ${String(m.text).slice(0, 120)}`)
+    .join("\n");
+
+  const response = await client().messages.create({
+    model: TUTOR_MODEL,
+    max_tokens: 80,
+    system:
+      "You see a photo of a worksheet with a child's hand pointing at a word. " +
+      "On ONE text line, each word has a small numbered circular chip directly " +
+      "above it; the same numbers with each chip's word are listed in the message. " +
+      "Decide which chip's word the fingertip is pointing at. The fingertip " +
+      "usually COVERS its target word — pick the chip at or directly above the " +
+      "fingertip, never a neighboring chip just because its word is easier to " +
+      'read. Respond with STRICT JSON only: {"found":true,"mark":3} — or ' +
+      '{"found":false} if no pointing hand is visible.',
+    messages: [
+      {
+        role: "user",
+        content: [
+          { type: "text", text: `MARKED WORDS (number: word):\n${list}` },
+          {
+            type: "image",
+            source: { type: "base64", media_type: sniffMediaType(data), data },
+          },
+        ],
+      },
+    ],
+  });
+
+  const raw = response.content
+    .filter((b): b is Anthropic.TextBlock => b.type === "text")
+    .map((b) => b.text)
+    .join("");
+  try {
+    const start = raw.indexOf("{");
+    const end = raw.lastIndexOf("}");
+    const parsed = JSON.parse(raw.slice(start, end + 1)) as {
+      found?: boolean;
+      mark?: unknown;
+    };
+    if (parsed.found === false) return null;
+    const mark = Math.trunc(Number(parsed.mark));
+    if (!Number.isFinite(mark) || !marks.some((m) => m.n === mark)) return null;
+    return { mark };
+  } catch {
+    return null;
+  }
+}
+
 export async function runTutor(
   { imageBase64, question, history, lines }: TutorRequest,
   onDelta: (text: string) => void,

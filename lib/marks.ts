@@ -13,8 +13,13 @@
  * Compliance unchanged (amended §7 rule 3 #2): the model picks WHERE (a mark
  * number / a word location); the text spoken is always the OCR text VERBATIM.
  *
- * buildLineMarks is pure (covered by scripts/logic-tests.mts); drawMarks is
- * canvas/DOM and client-only.
+ * WORD scope gets the same treatment (two-pass): once the line is picked,
+ * buildWordMarks numbers that line's word units and the model answers "which
+ * chip?" again — never "read the word", because the fingertip occludes its
+ * target and the model would name a legible neighbor instead.
+ *
+ * buildLineMarks/buildWordMarks are pure (covered by scripts/logic-tests.mts);
+ * drawMarks is canvas/DOM and client-only.
  */
 
 import type { OcrBox } from "@/components/KaraokeHighlight";
@@ -45,6 +50,39 @@ export function buildLineMarks(blocks: OcrBox[]): LineMark[] {
   return marks;
 }
 
+export interface WordMark {
+  /** 1-based chip number shown on the image and returned by the model. */
+  n: number;
+  /** OCR word text (sent to the model for cross-checking). */
+  text: string;
+  /** Word box, pixel coords of the SCANNED frame. */
+  box: [number, number][];
+  /** Index into the caller's in-line word-unit array. */
+  unitIndex: number;
+}
+
+/** Number the picked line's non-empty word units 1..K (cap MAX_MARKS). */
+export function buildWordMarks(
+  words: { text: string; box: [number, number][] }[],
+): WordMark[] {
+  const marks: WordMark[] = [];
+  for (let unitIndex = 0; unitIndex < words.length; unitIndex++) {
+    const w = words[unitIndex];
+    if (w.text.trim() === "") continue;
+    if (marks.length >= MAX_MARKS) break;
+    marks.push({ n: marks.length + 1, text: w.text, box: w.box, unitIndex });
+  }
+  return marks;
+}
+
+/**
+ * Chip placement relative to its box: "left" for line marks (left edge of the
+ * line), "above" for word marks — the finger approaches from below on the
+ * desk rig, so a chip above the word stays visible while the word itself is
+ * covered by the fingertip.
+ */
+export type MarkPlacement = "left" | "above";
+
 /**
  * Composite the numbered chips onto a captured frame. `boxSpace` is the
  * scanned frame's dimensions (the space the OCR boxes live in); the fresh
@@ -53,8 +91,9 @@ export function buildLineMarks(blocks: OcrBox[]): LineMark[] {
  */
 export async function drawMarks(
   shotBase64: string,
-  marks: LineMark[],
+  marks: { n: number; box: [number, number][] }[],
   boxSpace: { width: number; height: number },
+  placement: MarkPlacement = "left",
 ): Promise<string> {
   const img = await new Promise<HTMLImageElement>((resolve, reject) => {
     const el = new Image();
@@ -79,10 +118,21 @@ export async function drawMarks(
     const top = Math.min(...ys) * sy;
     const bottom = Math.max(...ys) * sy;
     const left = Math.min(...xs) * sx;
-    const cy = (top + bottom) / 2;
-    const r = Math.min(26, Math.max(12, (bottom - top) * 0.75));
-    // Chip sits just left of the line; clamped inside the frame.
-    const cx = Math.max(r + 2, left - r - 6);
+    const right = Math.max(...xs) * sx;
+    let cx: number;
+    let cy: number;
+    let r: number;
+    if (placement === "above") {
+      // Word chip: smaller, centered above the word; clamped inside the frame.
+      r = Math.min(18, Math.max(9, (bottom - top) * 0.55));
+      cx = Math.min(canvas.width - r - 2, Math.max(r + 2, (left + right) / 2));
+      cy = Math.max(r + 2, top - r - 4);
+    } else {
+      // Line chip sits just left of the line; clamped inside the frame.
+      r = Math.min(26, Math.max(12, (bottom - top) * 0.75));
+      cy = (top + bottom) / 2;
+      cx = Math.max(r + 2, left - r - 6);
+    }
 
     ctx.beginPath();
     ctx.arc(cx, cy, r, 0, Math.PI * 2);
