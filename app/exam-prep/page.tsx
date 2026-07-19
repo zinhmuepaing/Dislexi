@@ -12,13 +12,15 @@
  * replaces coordinate regression, which selected lines below the finger):
  * enter → mic on (endless, silence-chunked; §7 rule 8 transcripts only) →
  * camera ready → AUTO scan (OCR, preview stays live) → say "read this" (or
- * tap Read this) → capture a frame → composite numbered chips on the OCR
- * lines (lib/marks.ts) → POST /api/point {marks} (vision model CLASSIFIES
- * the marked line) → word scope only: SECOND pass with chips above each word
- * of the picked line → POST /api/point {granularity:"word"} (model classifies
- * the word chip; pass-1 word guess is the fallback) → resolve unit per scope →
- * read it verbatim with karaoke highlight → log 'read'/'reread' → … →
- * end session → stats.
+ * tap Read this) → capture a CLEAN frame (the hand; no graphics on it) +
+ * composite tinted bands/numbered chips on the hand-free SCAN frame
+ * (lib/marks.ts) → POST /api/point {imageBase64, markedBase64, marks} (vision
+ * model finds the fingertip in the clean shot, CLASSIFIES the band at that
+ * spot in the marked scan) → word scope only: SECOND pass with chips above
+ * each word of the picked line → POST /api/point {granularity:"word"}
+ * (model classifies the word chip; pass-1 word guess is the fallback) →
+ * resolve unit per scope → read it verbatim with karaoke highlight →
+ * log 'read'/'reread' → … → end session → stats.
  *
  * Revert paths preserved: /api/point coordinate mode (call without marks) and
  * the MediaPipe implementation in lib/hand-tracker.ts (dwell loop not started).
@@ -283,8 +285,10 @@ export default function ExamPrepPage() {
         setStatus("Camera not ready — try again.");
         return;
       }
+      // Marks go on the hand-free SCAN frame; the live shot stays clean —
+      // annotating the shot painted chips over the pointing hand.
       const lineMarks = buildLineMarks(current.blocks);
-      const marked = await drawMarks(shot.base64, lineMarks, {
+      const marked = await drawMarks(current.frame.base64, lineMarks, {
         width: current.frame.width,
         height: current.frame.height,
       });
@@ -292,7 +296,8 @@ export default function ExamPrepPage() {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
-          imageBase64: marked,
+          imageBase64: shot.base64,
+          markedBase64: marked,
           marks: lineMarks.map(({ n, text }) => ({ n, text })),
         }),
       });
@@ -344,8 +349,9 @@ export default function ExamPrepPage() {
         const wordMarks = buildWordMarks(
           inLine.map((u) => ({ text: u.text, box: u.blocks[0].box })),
         );
+        // Word chips also go on the hand-free scan frame (two-photo mode).
         const marked = await drawMarks(
-          shotBase64,
+          frame.base64,
           wordMarks,
           { width: frame.width, height: frame.height },
           "above",
@@ -354,7 +360,8 @@ export default function ExamPrepPage() {
           method: "POST",
           headers: { "Content-Type": "application/json" },
           body: JSON.stringify({
-            imageBase64: marked,
+            imageBase64: shotBase64,
+            markedBase64: marked,
             marks: wordMarks.map(({ n, text }) => ({ n, text })),
             granularity: "word",
           }),

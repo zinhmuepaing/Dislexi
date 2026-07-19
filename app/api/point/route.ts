@@ -2,11 +2,14 @@
  * POST /api/point — visual pointing (amended §7 rule 3 #2). Two modes:
  *
  * SET-OF-MARKS (preferred; branch feature/set-of-marks-pointing):
- *   { imageBase64, marks: [{n, text}] } → { found: true, mark, word } | { found: false }
- *   The frame arrives with numbered chips composited at each OCR line
- *   (lib/marks.ts); the model CLASSIFIES which marked line the finger points
- *   at (+ the word it sees) instead of regressing coordinates — which was
- *   systematically selecting lines below the finger.
+ *   { imageBase64, markedBase64, marks: [{n, text}] }
+ *     → { found: true, mark, word } | { found: false }
+ *   TWO pixel-aligned photos: imageBase64 is the CLEAN live shot (the hand,
+ *   no graphics — annotating it painted chips over the hand and detection
+ *   died); markedBase64 is the hand-free SCAN frame with tinted line bands +
+ *   numbered chips (lib/marks.ts). The model finds the fingertip in photo 1
+ *   and CLASSIFIES the band at that spot in photo 2 — no coordinate
+ *   regression, which was systematically selecting lines below the finger.
  *
  *   With { granularity: "word" } the chips sit above each word of one already-
  *   picked line and the model answers { found: true, mark } only — pure
@@ -26,7 +29,12 @@ export const runtime = "nodejs";
 export const maxDuration = 20;
 
 export async function POST(req: NextRequest) {
-  let body: { imageBase64?: unknown; marks?: unknown; granularity?: unknown };
+  let body: {
+    imageBase64?: unknown;
+    markedBase64?: unknown;
+    marks?: unknown;
+    granularity?: unknown;
+  };
   try {
     body = await req.json();
   } catch {
@@ -50,10 +58,16 @@ export async function POST(req: NextRequest) {
 
   try {
     if (marks.length > 0) {
+      if (typeof body.markedBase64 !== "string" || !body.markedBase64) {
+        return NextResponse.json(
+          { error: "markedBase64 (string) is required with marks" },
+          { status: 400 },
+        );
+      }
       const choice =
         body.granularity === "word"
-          ? await locatePointedWordMark(body.imageBase64, marks)
-          : await locatePointedMark(body.imageBase64, marks);
+          ? await locatePointedWordMark(body.imageBase64, body.markedBase64, marks)
+          : await locatePointedMark(body.imageBase64, body.markedBase64, marks);
       return NextResponse.json(choice ? { found: true, ...choice } : { found: false });
     }
     const point = await locatePointer(body.imageBase64);

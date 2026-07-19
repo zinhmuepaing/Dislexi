@@ -62,13 +62,31 @@ every line; `locatePointedMark` prompt updated (fingertip → touched band →
 that band's number; never trace across the page). Word-pass drawing
 unchanged. Gates green (logic-tests, eslint, build). NOT committed yet.
 
-**NEXT:** on-device retest on the dense worksheet (point mid-line at
-"installation" / "single-phase" — expect the exact word); if line picks still
-slip on handheld video, implement re-OCR-per-point; /api/point two-pass
-latency is ~7–10 s point→speech — if demos need faster, crop pass 2 to the
-picked line's neighborhood. Handwritten OCR-garbage lines are still
-selectable and read verbatim ("=31×415×6209×0.8") — consider a confidence
-floor for selectable units.
+**⚠ Fix #2 REGRESSED on device: "doesn't even track my finger".** Root cause:
+bands/chips were composited onto the LIVE shot — the canvas doesn't know
+where the hand is, so bands tinted the fingers and the new RIGHT-edge chips
+(hand enters bottom-right) stamped opaque circles onto the hand → model:
+found:false. Left-only chips never collided with the hand, which is why this
+never happened before.
+
+**Fix #3 (this session): two-photo set-of-marks.** The marks now go on the
+hand-free SCAN frame (captured at auto-scan, before the hand is on the page);
+the live shot stays CLEAN. `/api/point` marks mode now takes
+`{imageBase64: clean shot, markedBase64: marked scan, marks}` (markedBase64
+required → old single-image marked calls 400). Both prompts rewritten: find
+the fingertip in PHOTO 1, answer the band/chip at the SAME position in
+PHOTO 2 (pixel-aligned). Bonus: the pointed word is UNCOVERED in photo 2, so
+the pass-1 fallback word answer should improve too. Exam-prep (both passes) +
+autopsy `locateWord` updated. Cost: 2 images per call (latency ~same, tokens
+up). Caveat: photo alignment assumes no scan-vs-shot drift — fine on the
+stand; handheld drift remains the separate known issue (re-OCR-per-point is
+still the fix if it bites). Gates green (logic-tests, eslint, build).
+
+**NEXT:** on-device retest (stand, finger): (1) finger found at all, (2)
+point mid-line at "installation" / "single-phase" on the dense TP worksheet —
+expect the exact word. If line picks still slip: re-OCR-per-point. Later:
+latency (crop pass 2 to the picked line's neighborhood), confidence floor so
+OCR-garbage handwriting isn't selectable.
 
 ## RESUME FROM HERE (2026-07-19, eighth session — set-of-marks pointing branch)
 
