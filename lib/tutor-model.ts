@@ -302,41 +302,18 @@ export interface MarkChoice {
   word: string | null;
 }
 
-/** Strip a data-URL prefix and build the two-photo content block used by both
- * mark passes: PHOTO 1 = clean live shot (the hand, no graphics on it),
- * PHOTO 2 = the pixel-aligned SCAN frame with the marks (no hand in it).
- * Annotating the live shot painted chips/bands over the pointing hand and the
- * model stopped finding it — the images must stay separate. */
-function twoPhotoContent(
-  shotBase64: string,
-  markedBase64: string,
-  listLabel: string,
-  list: string,
-): Anthropic.ContentBlockParam[] {
-  const shot = shotBase64.replace(/^data:image\/\w+;base64,/, "");
-  const marked = markedBase64.replace(/^data:image\/\w+;base64,/, "");
-  return [
-    { type: "text", text: `${listLabel}\n${list}` },
-    { type: "text", text: "PHOTO 1 — live shot (the pointing hand):" },
-    { type: "image", source: { type: "base64", media_type: sniffMediaType(shot), data: shot } },
-    { type: "text", text: "PHOTO 2 — the SAME page, no hand, with the numbered marks:" },
-    { type: "image", source: { type: "base64", media_type: sniffMediaType(marked), data: marked } },
-  ];
-}
-
 /**
  * SET-OF-MARKS POINTING (branch: feature/set-of-marks-pointing; amended §7
- * rule 3 #2). TWO pixel-aligned photos: the clean live shot (hand) and the
- * scan frame with tinted line bands + numbered chips at both ends
- * (lib/marks.ts). Classification, not coordinate regression: the model finds
- * the fingertip in photo 1, names the band at that spot in photo 2 — the
- * caller resolves against OCR boxes and speaks OCR text VERBATIM.
+ * rule 3 #2). The frame arrives with numbered chips composited at each OCR
+ * line (lib/marks.ts). Classification, not coordinate regression: the model
+ * names the marked LINE the finger points at plus the word it sees pointed —
+ * the caller resolves both against OCR boxes and speaks OCR text VERBATIM.
  */
 export async function locatePointedMark(
-  shotBase64: string,
-  markedBase64: string,
+  imageBase64: string,
   marks: { n: number; text: string }[],
 ): Promise<MarkChoice | null> {
+  const data = imageBase64.replace(/^data:image\/\w+;base64,/, "");
   const list = marks
     .slice(0, 60)
     .map((m) => `${Math.trunc(Number(m.n))}: ${String(m.text).slice(0, 120)}`)
@@ -346,25 +323,29 @@ export async function locatePointedMark(
     model: TUTOR_MODEL,
     max_tokens: 120,
     system:
-      "You are shown TWO photos of the SAME worksheet page, pixel-aligned. " +
-      "PHOTO 1 is the live shot with a child's hand pointing at the text. " +
-      "PHOTO 2 is the same page WITHOUT the hand: each text line is covered by " +
-      "a translucent tinted band (colors alternate line to line) carrying the " +
-      "SAME number in a circular chip at BOTH ends; the numbers with each " +
-      "line's text are listed in the message. Find the fingertip in PHOTO 1, " +
-      "then look at the SAME position in PHOTO 2 and answer that band's " +
-      "number — never trace across the page. The finger often covers its " +
-      "target: the intended line is the one the fingertip touches, or the line " +
-      "just beyond the fingernail in the pointing direction — when in doubt " +
-      "between two bands, prefer the one ABOVE the fingertip. Also read the " +
-      "exact single word at the pointed spot, copied verbatim (PHOTO 2 shows " +
-      "it uncovered). Respond with STRICT JSON only: " +
+      "You see a photo of a worksheet with a child's hand pointing at the text. " +
+      "Each text line is covered by a translucent tinted band (colors alternate " +
+      "line to line) and carries the SAME number in a circular chip at BOTH ends " +
+      "of its band; the numbers with each line's text are listed in the message. " +
+      "Decide which numbered LINE the finger is pointing at: find the fingertip, " +
+      "then the band it touches, then that band's chip number — never trace " +
+      "across the page. The finger often covers its target: the intended line is " +
+      "the one the fingertip touches, or the line just beyond the fingernail in " +
+      "the pointing direction — when in doubt between two bands, prefer the one " +
+      "ABOVE the fingertip. Also read the exact single word being pointed at, " +
+      "copied verbatim from the image. Respond with STRICT JSON only: " +
       '{"found":true,"mark":3,"word":"perimeter"} — or {"found":true,"mark":3,"word":null} ' +
-      'if the word is unreadable, or {"found":false} if no pointing hand is visible in PHOTO 1.',
+      'if the word is unreadable, or {"found":false} if no pointing hand is visible.',
     messages: [
       {
         role: "user",
-        content: twoPhotoContent(shotBase64, markedBase64, "MARKED LINES (number: text):", list),
+        content: [
+          { type: "text", text: `MARKED LINES (number: text):\n${list}` },
+          {
+            type: "image",
+            source: { type: "base64", media_type: sniffMediaType(data), data },
+          },
+        ],
       },
     ],
   });
@@ -392,17 +373,17 @@ export async function locatePointedMark(
 }
 
 /**
- * SET-OF-MARKS, WORD PASS (two-pass pointing): PHOTO 2 is the scan frame with
- * small numbered chips ABOVE each word of the already-picked line. Pure
+ * SET-OF-MARKS, WORD PASS (two-pass pointing): the frame arrives with small
+ * numbered chips composited ABOVE each word of the already-picked line. Pure
  * classification — the model names a chip, never reads text: the fingertip
  * occludes its target word, so asking the model to read it made it name a
  * legible neighbor (usually the first word of the line) instead.
  */
 export async function locatePointedWordMark(
-  shotBase64: string,
-  markedBase64: string,
+  imageBase64: string,
   marks: { n: number; text: string }[],
 ): Promise<{ mark: number } | null> {
+  const data = imageBase64.replace(/^data:image\/\w+;base64,/, "");
   const list = marks
     .slice(0, 60)
     .map((m) => `${Math.trunc(Number(m.n))}: ${String(m.text).slice(0, 120)}`)
@@ -412,21 +393,24 @@ export async function locatePointedWordMark(
     model: TUTOR_MODEL,
     max_tokens: 80,
     system:
-      "You are shown TWO photos of the SAME worksheet page, pixel-aligned. " +
-      "PHOTO 1 is the live shot with a child's hand pointing at a word. " +
-      "PHOTO 2 is the same page WITHOUT the hand: on ONE text line, each word " +
-      "has a small numbered circular chip directly above it; the same numbers " +
-      "with each chip's word are listed in the message. Find the fingertip in " +
-      "PHOTO 1, then look at the SAME position in PHOTO 2 and answer the chip " +
-      "of the word at that spot. The fingertip usually COVERS its target word " +
-      "in PHOTO 1 — pick the chip at or directly above the fingertip position, " +
-      "never a neighboring chip just because its word is easier to see. " +
-      'Respond with STRICT JSON only: {"found":true,"mark":3} — or ' +
-      '{"found":false} if no pointing hand is visible in PHOTO 1.',
+      "You see a photo of a worksheet with a child's hand pointing at a word. " +
+      "On ONE text line, each word has a small numbered circular chip directly " +
+      "above it; the same numbers with each chip's word are listed in the message. " +
+      "Decide which chip's word the fingertip is pointing at. The fingertip " +
+      "usually COVERS its target word — pick the chip at or directly above the " +
+      "fingertip, never a neighboring chip just because its word is easier to " +
+      'read. Respond with STRICT JSON only: {"found":true,"mark":3} — or ' +
+      '{"found":false} if no pointing hand is visible.',
     messages: [
       {
         role: "user",
-        content: twoPhotoContent(shotBase64, markedBase64, "MARKED WORDS (number: word):", list),
+        content: [
+          { type: "text", text: `MARKED WORDS (number: word):\n${list}` },
+          {
+            type: "image",
+            source: { type: "base64", media_type: sniffMediaType(data), data },
+          },
+        ],
       },
     ],
   });

@@ -84,12 +84,10 @@ export function buildWordMarks(
 export type MarkPlacement = "left" | "above";
 
 /**
- * Composite the numbered marks onto a captured frame — the hand-free SCAN
- * frame (two-photo mode): marks must never be painted over the live shot,
- * where they land on the pointing hand and kill detection. `boxSpace` is the
- * scanned frame's dimensions (the space the OCR boxes live in); the drawn
- * image is scaled to it, so a resolution mismatch cannot shift the marks.
- * Returns a JPEG data URL.
+ * Composite the numbered chips onto a captured frame. `boxSpace` is the
+ * scanned frame's dimensions (the space the OCR boxes live in); the fresh
+ * shot is scaled to it, so a camera-resolution change between scan and shot
+ * cannot shift the chips. Returns a JPEG data URL.
  */
 export async function drawMarks(
   shotBase64: string,
