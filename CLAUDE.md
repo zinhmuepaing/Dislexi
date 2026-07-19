@@ -41,6 +41,9 @@ clip over the front camera, looking down at a worksheet on the desk.
    distance (y-weighted), ties → topmost, triggered by ~0.7 s dwell. The
    displayed dot and the selecting point must be the same point
    (`detectPointerVideo`/`selectWordAt`/`DwellTracker` in `lib/hand-tracker.ts`).
+   *(Amended 2026-07-19 #2: the LIVE selection path is set-of-marks via
+   `/api/point` with fresh-shot re-OCR drift alignment — `lib/pointing.ts` +
+   `lib/align.ts`; the MediaPipe mechanism above is the preserved revert path.)*
 6. **Mode transitions announced aloud** (ADHD split-attention mitigation).
 7. **Grapheme sub-boxes** = proportional char-count split of the word's box
    (`subBoxFor` in `components/KaraokeHighlight.tsx`).

@@ -1,5 +1,64 @@
 # PROGRESS.md — Dislexi build session log
 
+## RESUME FROM HERE (2026-07-19, tenth session — pointing drift fix + autopsy parity)
+
+On **branch `claude/hand-tracking-logic-analysis-43niyb`** (kept separate from
+`main` per user instruction — do NOT merge). Task: fix/improve the pointing
+("hand-tracking") logic for Exam-Prep and Autopsy. Five defects found by code
+analysis, all fixed; user confirmed the approach choices (re-OCR + remap,
+freeze-during-read, button-only quiz check, minimal doc amendment).
+
+**Delivered:**
+- **Drift fix (the eighth-session ⚠ open bug)** — `lib/align.ts` (pure,
+  logic-tested): the fresh pointing shot is re-OCR'd as a REGISTRATION signal
+  (the hand occludes the target, so fresh blocks can't replace the scan);
+  fresh↔scan lines are text-matched (`lineSimilarity`, digit-aware — new in
+  `lib/text-match.ts`; "Question 1" ≠ "Question 2") with an LIS reading-order
+  filter, a least-squares 2-D similarity (rotate+scale+translate) is fit on
+  matched line centers, and ALL scan boxes (occluded words included) are
+  remapped into shot space. Guard rails (≥2 matches, scale ∈ [0.5,2], mean
+  residual < 1.5× median line height) degrade to IDENTITY = old behavior.
+  Cost: one extra OCR round-trip (~1 s) per point.
+- **Shared pipeline `lib/pointing.ts`** — single-flight, ONE shot per
+  interaction with the preview FROZEN on it (§7 rule 2; unfrozen when the
+  interaction ends, so highlights sit exactly on the displayed text — fixes
+  the floating-highlight symptom in the user's video), align → line chips →
+  word chips → typed failure reasons. Pages commit the aligned blocks + shot
+  as the new scan on success.
+- **Autopsy parity** — `locateWord` now runs the two-pass word marks (it
+  still used the model-READ word, the diagnosed occlusion failure; autopsy is
+  always word-granularity, so it was the worst affected).
+- **Quiz point-check fixed** — it captured the frame the instant the "Now
+  point at…" prompt STARTED (child had no time to point), the Check button
+  hard-coded said=false, and both triggers could double-record. Now: `said`
+  stored on QuizState, button-driven check, single-flight, stage+index
+  revalidated after the await.
+- **Exam-prep re-entrancy** — `finding` state guard (stale closure) →
+  `findingRef`; rescan unfreezes + waits two rAFs so it can't OCR a stale
+  frozen frame. Dead `located` pointer-dot code removed from both pages.
+- **Word chips** — `aboveChipCenterY`/`ceilingFor` in `lib/marks.ts` clamp
+  above-word chips into the inter-line gap (ninth-session legibility check).
+- Docs: rule 5 parenthetical amendment in ARCHITECTURE.md + CLAUDE.md
+  (set-of-marks is the live path; MediaPipe = revert path, untouched).
+
+Gates green per commit: `npx tsx scripts/logic-tests.mts` · `npx eslint .` ·
+`npm run build`.
+
+**NEXT (on-device, can't be done here):**
+- Handheld drift retest: scan, shift/rotate the paper ~1 cm, "read this" —
+  expect the RIGHT line/word (was: chip lands one line off). Word scope and
+  autopsy coach both.
+- Freeze UX: preview should freeze on the shot during read/coach with the
+  highlight ON the text, then return live. If kids find the freeze confusing,
+  revert = pass `freeze:false` in `lib/pointing.ts` + drop `unfreeze()` calls
+  (decoupled from the drift fix).
+- Latency: point now costs +~1 s (re-OCR). If it drags, the escape hatch is
+  skipping re-OCR when the last alignment is < ~5 s old (timestamp check in
+  `lib/pointing.ts`).
+- Quiz: verify one result per word, Check waits for the child, chime on
+  correct point.
+- Chip legibility on real print at tight line spacing (gap-midpoint chips).
+
 ## RESUME FROM HERE (2026-07-20, ninth session — word-granularity set-of-marks)
 
 Still on **branch `feature/set-of-marks-pointing`**. User confirmed the
