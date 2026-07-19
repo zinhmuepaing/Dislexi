@@ -20,6 +20,16 @@ import { fastParseCommand } from "../lib/voice-commands";
 import { syllablesOf, coachingLines } from "../lib/syllables";
 import { similarity, saidWordMatches, bestWordMatch } from "../lib/text-match";
 import { buildLineMarks, buildWordMarks } from "../lib/marks";
+import {
+  matchLines,
+  estimateSimilarity,
+  applyToPoint,
+  applyToBox,
+  applyToBlocks,
+  alignScanToShot,
+  IDENTITY,
+  type Similarity2D,
+} from "../lib/align";
 
 const box = (l: number, t: number, r: number, b: number): [number, number][] => [
   [l, t],
@@ -468,6 +478,135 @@ const box = (l: number, t: number, r: number, b: number): [number, number][] => 
   const cleaned = stripMarkdown("## Summary\n\n**Overview**\n\n230 events with `89` reads.");
   assert.ok(!/[*#`]/.test(cleaned));
   assert.ok(cleaned.includes("Overview") && cleaned.includes("230 events"));
+}
+
+// ── align: matchLines — text pairing with reading-order (LIS) filter ─────────
+{
+  const scan = [{ text: "The perimeter of a rectangle" }, { text: "is twice the sum" }, { text: "of its sides." }];
+  const fresh = [{ text: "The perimeter of a rectangle" }, { text: "of its sides." }];
+  // Exact matches pair up; the occluded middle line simply has no pair.
+  assert.deepEqual(matchLines(scan, fresh), [
+    { scanIndex: 0, freshIndex: 0 },
+    { scanIndex: 2, freshIndex: 1 },
+  ]);
+  // Garbage fresh text below minSim never pairs.
+  assert.deepEqual(matchLines([{ text: "hello world" }], [{ text: "zzzzqqq" }]), []);
+  assert.deepEqual(matchLines([], []), []);
+  // Repeated identical lines resolve in reading order (no cross-pairing).
+  const repeated = matchLines(
+    [{ text: "Answer: ____" }, { text: "Question 2" }, { text: "Answer: ____" }],
+    [{ text: "Answer: ____" }, { text: "Question 2" }, { text: "Answer: ____" }],
+  );
+  assert.deepEqual(repeated, [
+    { scanIndex: 0, freshIndex: 0 },
+    { scanIndex: 1, freshIndex: 1 },
+    { scanIndex: 2, freshIndex: 2 },
+  ]);
+  // Crossed pairs (paper cannot reorder its lines) are filtered to a monotonic set.
+  const crossed = matchLines(
+    [{ text: "aaaa bbbb" }, { text: "cccc dddd" }],
+    [{ text: "cccc dddd" }, { text: "aaaa bbbb" }],
+  );
+  assert.equal(crossed.length, 1);
+  // Digits discriminate (lineSimilarity, not the digit-blind quiz matcher):
+  // fresh sees only "Question 2" — it must pair with scan's "Question 2".
+  assert.deepEqual(
+    matchLines([{ text: "Question 1" }, { text: "Question 2" }], [{ text: "Question 2" }]),
+    [{ scanIndex: 1, freshIndex: 0 }],
+  );
+}
+
+// ── align: estimateSimilarity — least-squares translate/scale/rotate ─────────
+{
+  const near = (x: number, y: number, eps = 1e-6) => assert.ok(Math.abs(x - y) < eps, `${x} !≈ ${y}`);
+  // Pure translation by (12, −30).
+  const t1 = estimateSimilarity([
+    { from: [0, 0], to: [12, -30] },
+    { from: [100, 0], to: [112, -30] },
+    { from: [0, 50], to: [12, 20] },
+  ])!;
+  near(t1.a, 1); near(t1.b, 0); near(t1.tx, 12); near(t1.ty, -30);
+  // Scale 1.1 + translation.
+  const t2 = estimateSimilarity([
+    { from: [0, 0], to: [5, 7] },
+    { from: [100, 0], to: [115, 7] },
+    { from: [0, 100], to: [5, 117] },
+  ])!;
+  near(t2.a, 1.1); near(t2.b, 0); near(t2.tx, 5); near(t2.ty, 7);
+  // 15° rotation about the origin.
+  const cos = Math.cos(Math.PI / 12);
+  const sin = Math.sin(Math.PI / 12);
+  const rot = ([x, y]: [number, number]): [number, number] => [cos * x - sin * y, sin * x + cos * y];
+  const t3 = estimateSimilarity(
+    ([[0, 0], [200, 0], [0, 100], [200, 100]] as [number, number][]).map((p) => ({ from: p, to: rot(p) })),
+  )!;
+  near(t3.a, cos); near(t3.b, sin); near(t3.tx, 0); near(t3.ty, 0);
+  // One pair → translation only; zero pairs → null.
+  const t4 = estimateSimilarity([{ from: [10, 20], to: [13, 26] }])!;
+  assert.deepEqual(t4, { a: 1, b: 0, tx: 3, ty: 6 });
+  assert.equal(estimateSimilarity([]), null);
+}
+
+// ── align: alignScanToShot — drift repro: occluded line remaps correctly ─────
+{
+  const scan: OcrBox[] = Array.from({ length: 5 }, (_, i) => ({
+    text: `worksheet line number ${i} with words`,
+    box: box(50, 100 + i * 40, 450, 120 + i * 40),
+  }));
+  // Ground-truth paper motion: small rotation + shift (handheld drift).
+  const truth: Similarity2D = { a: Math.cos(0.04), b: Math.sin(0.04), tx: 18, ty: -25 };
+  // Fresh OCR sees 4 of the 5 lines (index 2 occluded by the pointing hand).
+  const fresh: OcrBox[] = [0, 1, 3, 4].map((i) => ({
+    text: scan[i].text,
+    box: applyToBox(truth, scan[i].box),
+  }));
+  const { transform, matched, aligned } = alignScanToShot(scan, fresh);
+  assert.equal(aligned, true);
+  assert.equal(matched, 4);
+  // The OCCLUDED line's box lands within 1px of where the paper really moved it.
+  const remapped = applyToBox(transform, scan[2].box);
+  const expected = applyToBox(truth, scan[2].box);
+  remapped.forEach(([x, y], i) => {
+    assert.ok(Math.hypot(x - expected[i][0], y - expected[i][1]) < 1, "occluded box off by ≥1px");
+  });
+  // Unrelated fresh text (< 2 matches) → IDENTITY fallback.
+  const junk = alignScanToShot(scan, [
+    { text: "zzz", box: box(0, 0, 10, 10) },
+    { text: "qqq", box: box(0, 20, 10, 30) },
+  ]);
+  assert.deepEqual(junk.transform, IDENTITY);
+  assert.equal(junk.aligned, false);
+  // Absurd scale (10×) → rejected → IDENTITY.
+  const huge = alignScanToShot(
+    scan,
+    scan.map((b) => ({ text: b.text, box: b.box.map(([x, y]) => [x * 10, y * 10] as [number, number]) })),
+  );
+  assert.deepEqual(huge.transform, IDENTITY);
+  assert.equal(huge.aligned, false);
+}
+
+// ── align: applyToBlocks — nested word boxes remap; inputs untouched ─────────
+{
+  const t: Similarity2D = { a: 1, b: 0, tx: 10, ty: 5 };
+  const blocks: OcrBox[] = [
+    {
+      text: "two words",
+      box: box(0, 0, 100, 20),
+      words: [
+        { text: "two", box: box(0, 0, 40, 20) },
+        { text: "words", box: box(50, 0, 100, 20) },
+      ],
+    },
+  ];
+  const out = applyToBlocks(t, blocks);
+  assert.deepEqual(out[0].box, box(10, 5, 110, 25));
+  assert.deepEqual(out[0].words![0].box, box(10, 5, 50, 25));
+  assert.equal(out[0].text, "two words");
+  assert.equal(out[0].words![1].text, "words");
+  // No mutation of the input.
+  assert.deepEqual(blocks[0].box, box(0, 0, 100, 20));
+  assert.deepEqual(blocks[0].words![0].box, box(0, 0, 40, 20));
+  assert.deepEqual(applyToPoint(t, [1, 2]), [11, 7]);
 }
 
 console.log("logic-tests: all assertions passed");

@@ -27,13 +27,26 @@ function levenshtein(a: string, b: string): number {
   return prev[n];
 }
 
-/** 0–1 similarity of the alphabetic cores of two strings. */
-export function similarity(a: string, b: string): number {
-  const na = normalizeAlpha(a);
-  const nb = normalizeAlpha(b);
+function coreSimilarity(na: string, nb: string): number {
   if (!na || !nb) return 0;
   if (na === nb) return 1;
   return 1 - levenshtein(na, nb) / Math.max(na.length, nb.length);
+}
+
+/** 0–1 similarity of the alphabetic cores of two strings. */
+export function similarity(a: string, b: string): number {
+  return coreSimilarity(normalizeAlpha(a), normalizeAlpha(b));
+}
+
+const normalizeAlnum = (s: string) => s.toLowerCase().replace(/[^a-z0-9]/g, "");
+
+/**
+ * 0–1 similarity keeping digits — for OCR line registration (lib/align.ts),
+ * where "Question 1" and "Question 2" must NOT score 1 the way the
+ * spoken-answer matcher would treat them.
+ */
+export function lineSimilarity(a: string, b: string): number {
+  return coreSimilarity(normalizeAlnum(a), normalizeAlnum(b));
 }
 
 /**
