@@ -8,17 +8,17 @@
  * only as (a) voice-COMMAND interpreter and (b) VISUAL POINTER — it decides
  * WHICH action / WHERE the finger is, never WHAT text is spoken.
  *
- * Pointing flow (set-of-marks, branch feature/set-of-marks-pointing —
- * replaces coordinate regression, which selected lines below the finger):
- * enter → mic on (endless, silence-chunked; §7 rule 8 transcripts only) →
- * camera ready → AUTO scan (OCR, preview stays live) → say "read this" (or
- * tap Read this) → capture a frame → composite numbered chips on the OCR
- * lines (lib/marks.ts) → POST /api/point {marks} (vision model CLASSIFIES
- * the marked line) → word scope only: SECOND pass with chips above each word
- * of the picked line → POST /api/point {granularity:"word"} (model classifies
- * the word chip; pass-1 word guess is the fallback) → resolve unit per scope →
- * read it verbatim with karaoke highlight → log 'read'/'reread' → … →
- * end session → stats.
+ * Pointing flow (set-of-marks + drift alignment, lib/pointing.ts): enter →
+ * mic on (endless, silence-chunked; §7 rule 8 transcripts only) → camera
+ * ready → AUTO scan (OCR, preview stays live) → say "read this" (or tap the
+ * button) → ONE shot, preview frozen on it for the whole interaction (§7
+ * rule 2) → the shot is re-OCR'd and the scan's boxes aligned to it
+ * (lib/align.ts — fixes handheld scan-vs-shot drift) → numbered chips on the
+ * lines → POST /api/point {marks} (vision model CLASSIFIES the marked line)
+ * → word scope only: SECOND pass with chips above each word of the picked
+ * line (model classifies the word chip; pass-1 word guess is the fallback) →
+ * resolve unit per scope → read it verbatim with karaoke highlight on the
+ * frozen frame → unfreeze → log 'read'/'reread' → … → end session → stats.
  *
  * Revert paths preserved: /api/point coordinate mode (call without marks) and
  * the MediaPipe implementation in lib/hand-tracker.ts (dwell loop not started).
@@ -30,9 +30,7 @@ import { useRouter } from "next/navigation";
 import { ChevronLeft, Mic, MicOff, ScanText, RotateCw, Square } from "lucide-react";
 import { CameraStage, CameraStageHandle, CapturedFrame } from "@/components/CameraStage";
 import { KaraokeHighlight, OcrBox, rectForRange } from "@/components/KaraokeHighlight";
-import { Point } from "@/lib/hand-tracker";
-import { buildLineMarks, buildWordMarks, drawMarks, LineMark } from "@/lib/marks";
-import { bestWordMatch } from "@/lib/text-match";
+import { locatePointedUnit, PointFailure } from "@/lib/pointing";
 import { speak, stopSpeaking, announce, primeSpeech } from "@/lib/speech";
 import { installAudioUnlock } from "@/lib/audio";
 import { SessionLogger } from "@/lib/event-queue";
@@ -143,6 +141,7 @@ export default function ExamPrepPage() {
   const unitsRef = useRef<UnitSet>({ units: [], selectables: [] });
   const scopeRef = useRef<ReadScope>("sentence");
   const scanningRef = useRef(false);
+  const findingRef = useRef(false);
   const lastReadRef = useRef<Sentence | null>(null);
   const listenerRef = useRef<VoiceListener | null>(null);
   const autoScanTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
@@ -150,7 +149,6 @@ export default function ExamPrepPage() {
   const [scan, setScan] = useState<Scan | null>(null);
   const [scope, setScope] = useState<ReadScope>("sentence");
   const [selectables, setSelectables] = useState<Selectable[]>([]);
-  const [located, setLocated] = useState<Point | null>(null);
   const [pickedBox, setPickedBox] = useState<[number, number][] | null>(null);
   const [selected, setSelected] = useState<OcrBox | null>(null);
   const [activeChar, setActiveChar] = useState<{ start: number; len: number }>({ start: 0, len: 0 });
@@ -187,6 +185,10 @@ export default function ExamPrepPage() {
     setStatus("Scanning the page…");
 
     try {
+      // If a read left the preview frozen, let the draw loop paint a live
+      // frame before capturing (two rAFs: unfreeze applies, then a draw).
+      stage.current?.unfreeze();
+      await new Promise((r) => requestAnimationFrame(() => requestAnimationFrame(r)));
       const captured = stage.current?.captureFrame({ freeze: false });
       if (!captured) {
         setStatus("Camera not ready yet — tap Rescan in a moment.");
@@ -259,15 +261,27 @@ export default function ExamPrepPage() {
     }
   }
 
+  const FAIL_MESSAGES: Record<Exclude<PointFailure, "busy">, string> = {
+    camera: "Camera not ready — try again.",
+    no_finger: "I couldn’t see your finger — point clearly at a word and try again.",
+    no_word: "I couldn’t tell which word — point right under it and try again.",
+  };
+
+  /** Word units of one OCR line, in stable computeUnits order. */
+  function unitsInLine(blockIndex: number): Sentence[] {
+    return unitsRef.current.units.filter((u) => u.blockIndices[0] === blockIndex);
+  }
+
   /**
-   * Capture a frame, composite numbered chips on the OCR lines, and ask the
-   * vision model WHICH mark the finger points at (set-of-marks — replaces
-   * coordinate regression, which selected lines below the finger). Word scope
-   * then runs a second, word-granularity marks pass inside resolveUnit.
+   * Point-to-read via the shared set-of-marks pipeline (lib/pointing.ts):
+   * one shot, frozen on screen for the whole interaction (§7 rule 2) — the
+   * scan's boxes are re-aligned to that shot (drift fix), the vision model
+   * classifies the chip, and word scope runs the word-granularity pass.
    */
   async function readViaPointer(scopeOverride?: ReadScope) {
     const current = scanRef.current;
-    if (!current || finding) return;
+    if (!current || findingRef.current) return;
+    findingRef.current = true;
     if (busyRef.current) {
       stopSpeaking();
       busyRef.current = false;
@@ -275,36 +289,39 @@ export default function ExamPrepPage() {
     if (scopeOverride && scopeOverride !== scopeRef.current) applyScope(scopeOverride);
 
     setFinding(true);
-    setLocated(null);
     setStatus("Finding your finger…");
+    let ownsFreeze = true;
     try {
-      const shot = stage.current?.captureFrame({ freeze: false });
-      if (!shot) {
-        setStatus("Camera not ready — try again.");
+      const outcome = await locatePointedUnit({
+        stage: stage.current,
+        scanBlocks: current.blocks,
+        scanSize: { width: current.frame.width, height: current.frame.height },
+        wordUnitsFor:
+          scopeRef.current === "word"
+            ? (bi) => unitsInLine(bi).map((u) => ({ text: u.text, box: u.blocks[0].box }))
+            : undefined,
+        onStatus: setStatus,
+      });
+      if (!outcome.ok) {
+        // "busy": another interaction owns the frozen preview — don't touch it.
+        if (outcome.reason === "busy") ownsFreeze = false;
+        else setStatus(FAIL_MESSAGES[outcome.reason]);
         return;
       }
-      const lineMarks = buildLineMarks(current.blocks);
-      const marked = await drawMarks(shot.base64, lineMarks, {
-        width: current.frame.width,
-        height: current.frame.height,
-      });
-      const res = await fetch("/api/point", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          imageBase64: marked,
-          marks: lineMarks.map(({ n, text }) => ({ n, text })),
-        }),
-      });
-      const data = (await res.json()) as { found?: boolean; mark?: number; word?: string | null };
-      const lineMark = data.found ? lineMarks.find((m) => m.n === data.mark) : undefined;
-      if (!lineMark) {
-        setStatus("I couldn’t see your finger — point clearly at a word and try again.");
-        return;
+      // Commit the aligned boxes + shot as the scan: overlays (guides, picked
+      // box, karaoke) now render in the space of the frame on screen.
+      if (outcome.aligned) {
+        scanRef.current = { frame: outcome.shot, blocks: outcome.alignedBlocks };
+        setScan(scanRef.current);
+        rebuildUnits();
       }
-      const unit = await resolveUnit(shot.base64, lineMark, data.word ?? null);
+      const { units } = unitsRef.current;
+      const unit =
+        scopeRef.current === "word"
+          ? (unitsInLine(outcome.blockIndex)[outcome.unitIndex ?? -1] ?? null)
+          : (units.find((u) => u.blockIndices.includes(outcome.blockIndex)) ?? null);
       if (!unit) {
-        setStatus("I couldn’t tell which word — point right under it and try again.");
+        setStatus(FAIL_MESSAGES.no_word);
         return;
       }
       await readUnit(unit);
@@ -312,67 +329,15 @@ export default function ExamPrepPage() {
       console.error("pointer read failed:", err);
       setStatus("Something went wrong — try again.");
     } finally {
+      if (ownsFreeze) stage.current?.unfreeze();
+      findingRef.current = false;
       setFinding(false);
     }
   }
 
-  /**
-   * Marked line → the unit to read, per the active scope. Word scope runs a
-   * SECOND set-of-marks pass: chips above each word of the picked line, model
-   * answers "which chip?" — classification, like the line pass, because the
-   * fingertip occludes its target word and asking the model to READ it made
-   * it name a legible neighbor (usually the line's first word). The pass-1
-   * word guess survives only as the fallback when the word pass fails.
-   */
-  async function resolveUnit(
-    shotBase64: string,
-    lineMark: LineMark,
-    word: string | null,
-  ): Promise<Sentence | null> {
-    const { units } = unitsRef.current;
-    if (scopeRef.current !== "word") {
-      return units.find((u) => u.blockIndices.includes(lineMark.blockIndex)) ?? null;
-    }
-    const inLine = units.filter((u) => u.blockIndices[0] === lineMark.blockIndex);
-    if (inLine.length === 0) return null;
-    if (inLine.length === 1) return inLine[0];
-
-    const frame = scanRef.current?.frame;
-    if (frame) {
-      try {
-        setStatus("Finding the word…");
-        const wordMarks = buildWordMarks(
-          inLine.map((u) => ({ text: u.text, box: u.blocks[0].box })),
-        );
-        const marked = await drawMarks(
-          shotBase64,
-          wordMarks,
-          { width: frame.width, height: frame.height },
-          "above",
-        );
-        const res = await fetch("/api/point", {
-          method: "POST",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({
-            imageBase64: marked,
-            marks: wordMarks.map(({ n, text }) => ({ n, text })),
-            granularity: "word",
-          }),
-        });
-        const data = (await res.json()) as { found?: boolean; mark?: number };
-        const wordMark = data.found ? wordMarks.find((m) => m.n === data.mark) : undefined;
-        if (wordMark) return inLine[wordMark.unitIndex];
-      } catch (err) {
-        console.error("word-mark pass failed:", err);
-      }
-    }
-    const match = bestWordMatch(inLine.map((u) => u.text), word);
-    return match ? inLine[match.index] : null;
-  }
-
   async function handleUtterance(text: string) {
     const cmd = await resolveVoiceCommand(text);
-    if (finding && cmd.intent !== "stop") return;
+    if (findingRef.current && cmd.intent !== "stop") return;
     switch (cmd.intent) {
       case "read":
         void readViaPointer(cmd.scope);
@@ -519,14 +484,6 @@ export default function ExamPrepPage() {
             activeCharLength={activeChar.len}
             frameWidth={frameW}
             frameHeight={frameH}
-          />
-        )}
-
-        {/* Located fingertip dot (from the vision model). */}
-        {located && (
-          <div
-            className="absolute h-4 w-4 -translate-x-1/2 -translate-y-1/2 rounded-full border-2 border-white bg-[var(--point)] shadow"
-            style={{ left: `${located.x * 100}%`, top: `${located.y * 100}%` }}
           />
         )}
 
