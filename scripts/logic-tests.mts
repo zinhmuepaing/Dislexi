@@ -18,7 +18,8 @@ import { parseSteps, stripMarkdown } from "../lib/tutor-model";
 import { buildSentences, buildParagraphs, blockToSentenceMap, localWordAt } from "../lib/sentences";
 import { fastParseCommand } from "../lib/voice-commands";
 import { syllablesOf, coachingLines } from "../lib/syllables";
-import { similarity, saidWordMatches } from "../lib/text-match";
+import { similarity, saidWordMatches, bestWordMatch } from "../lib/text-match";
+import { buildLineMarks } from "../lib/marks";
 
 const box = (l: number, t: number, r: number, b: number): [number, number][] => [
   [l, t],
@@ -193,6 +194,33 @@ const box = (l: number, t: number, r: number, b: number): [number, number][] => 
   assert.equal(saidWordMatches("a words", "awards"), true); // STT split — embedded match
   assert.equal(saidWordMatches("banana", "awards"), false);
   assert.equal(saidWordMatches("", "awards"), false);
+}
+
+// ── bestWordMatch: set-of-marks word resolution within the marked line ───────
+{
+  const line = ["Find", "the", "perimeter", "of", "the", "rectangle"];
+  assert.deepEqual(bestWordMatch(line, "perimeter"), { index: 2, score: 1 });
+  assert.equal(bestWordMatch(line, "perimetre")!.index, 2); // model misread → still matches
+  assert.equal(bestWordMatch(line, "zzzzz"), null); // hallucinated word rejected
+  assert.equal(bestWordMatch(line, null), null);
+  assert.equal(bestWordMatch([], "perimeter"), null);
+}
+
+// ── buildLineMarks: numbering skips empties, keeps block indices, caps ───────
+{
+  const blocks: OcrBox[] = [
+    { text: "Question 1.", box: box(0, 0, 100, 20) },
+    { text: "   ", box: box(0, 30, 100, 50) }, // empty → no chip
+    { text: "What is 2 + 2?", box: box(0, 60, 100, 80) },
+  ];
+  const marks = buildLineMarks(blocks);
+  assert.equal(marks.length, 2);
+  assert.deepEqual(marks.map((m) => m.n), [1, 2]); // chips numbered contiguously
+  assert.deepEqual(marks.map((m) => m.blockIndex), [0, 2]); // original indices kept
+  const many = buildLineMarks(
+    Array.from({ length: 60 }, (_, i) => ({ text: `line ${i}`, box: box(0, i * 20, 100, i * 20 + 15) })),
+  );
+  assert.equal(many.length, 40); // readability cap
 }
 
 // ── computeStats: quiz_result aggregation ────────────────────────────────────

@@ -295,6 +295,80 @@ export async function locatePointer(imageBase64: string): Promise<PointerLocatio
   }
 }
 
+export interface MarkChoice {
+  /** Chip number of the line the finger points at. */
+  mark: number;
+  /** The exact word being pointed at, as the model reads it off the image. */
+  word: string | null;
+}
+
+/**
+ * SET-OF-MARKS POINTING (branch: feature/set-of-marks-pointing; amended §7
+ * rule 3 #2). The frame arrives with numbered chips composited at each OCR
+ * line (lib/marks.ts). Classification, not coordinate regression: the model
+ * names the marked LINE the finger points at plus the word it sees pointed —
+ * the caller resolves both against OCR boxes and speaks OCR text VERBATIM.
+ */
+export async function locatePointedMark(
+  imageBase64: string,
+  marks: { n: number; text: string }[],
+): Promise<MarkChoice | null> {
+  const data = imageBase64.replace(/^data:image\/\w+;base64,/, "");
+  const list = marks
+    .slice(0, 60)
+    .map((m) => `${Math.trunc(Number(m.n))}: ${String(m.text).slice(0, 120)}`)
+    .join("\n");
+
+  const response = await client().messages.create({
+    model: TUTOR_MODEL,
+    max_tokens: 120,
+    system:
+      "You see a photo of a worksheet with a child's hand pointing at the text. " +
+      "Each text line has a numbered circular marker at its left edge; the same " +
+      "numbers with each line's text are listed in the message. Decide which " +
+      "MARKED LINE the finger is pointing at. The finger often covers its target: " +
+      "the intended line is the one the fingertip touches, or the line just beyond " +
+      "the fingernail in the pointing direction — when in doubt between two lines, " +
+      "prefer the one ABOVE the fingertip. Also read the exact single word being " +
+      "pointed at, copied verbatim from the image. Respond with STRICT JSON only: " +
+      '{"found":true,"mark":3,"word":"perimeter"} — or {"found":true,"mark":3,"word":null} ' +
+      'if the word is unreadable, or {"found":false} if no pointing hand is visible.',
+    messages: [
+      {
+        role: "user",
+        content: [
+          { type: "text", text: `MARKED LINES (number: text):\n${list}` },
+          {
+            type: "image",
+            source: { type: "base64", media_type: sniffMediaType(data), data },
+          },
+        ],
+      },
+    ],
+  });
+
+  const raw = response.content
+    .filter((b): b is Anthropic.TextBlock => b.type === "text")
+    .map((b) => b.text)
+    .join("");
+  try {
+    const start = raw.indexOf("{");
+    const end = raw.lastIndexOf("}");
+    const parsed = JSON.parse(raw.slice(start, end + 1)) as {
+      found?: boolean;
+      mark?: unknown;
+      word?: unknown;
+    };
+    if (parsed.found === false) return null;
+    const mark = Math.trunc(Number(parsed.mark));
+    if (!Number.isFinite(mark) || !marks.some((m) => m.n === mark)) return null;
+    const word = typeof parsed.word === "string" && parsed.word.trim() ? parsed.word.trim() : null;
+    return { mark, word };
+  } catch {
+    return null;
+  }
+}
+
 export async function runTutor(
   { imageBase64, question, history, lines }: TutorRequest,
   onDelta: (text: string) => void,
