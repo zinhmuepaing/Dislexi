@@ -61,6 +61,8 @@ interface QuizState {
   stage: "offer" | "say" | "point" | "done";
   index: number;
   results: QuizResultItem[];
+  /** Say-step outcome for the current word, carried into the point step. */
+  said?: boolean | null;
 }
 
 const SCAN_SETTLE_MS = 900;
@@ -427,21 +429,24 @@ export default function AutopsyPage() {
     const q = quizRef.current;
     if (!q) return;
     setStuck(null); // stop revealing the word before the pointing step
-    setQuizBoth({ stage: "point", index: q.index, results: q.results });
+    // Store the say result and WAIT: the check is button-driven, so the frame
+    // is captured when the child has actually pointed — never mid-prompt.
+    setQuizBoth({ stage: "point", index: q.index, results: q.results, said });
     void speak(`Now point at the word ${practiceRef.current[q.index]?.text}.`).catch(() => {});
-    void checkPointResult(said);
   }
 
-  /** Capture → locate finger → did the child point at the target word? */
-  async function checkPointResult(said: boolean) {
+  /** Button-driven: capture → locate finger → did the child point at the target? */
+  async function checkPointResult() {
     const q = quizRef.current;
-    if (!q) return;
+    if (!q || q.stage !== "point" || findingRef.current) return;
+    const said = q.said ?? null;
     const item = practiceRef.current[q.index];
     const target = scanEntryFor(item);
     if (!target) {
       recordResult(q.index, q.results, { word: item.text, said, pointed: null, skipped: false });
       return;
     }
+    findingRef.current = true;
     setFinding(true);
     setStatus("Finding your finger…");
     let pointed = false;
@@ -450,9 +455,13 @@ export default function AutopsyPage() {
       pointed = !!word && normalizeWord(word.text) === normalizeWord(item.text);
     } catch (err) {
       console.error("quiz point failed:", err);
+    } finally {
+      stage.current?.unfreeze();
+      findingRef.current = false;
+      setFinding(false);
     }
-    setFinding(false);
-    if (quizRef.current?.stage !== "point") return;
+    // The quiz may have been skipped/ended while the check was in flight.
+    if (quizRef.current?.stage !== "point" || quizRef.current.index !== q.index) return;
     if (pointed) playChime();
     recordResult(q.index, q.results, { word: item.text, said, pointed, skipped: false });
   }
@@ -465,7 +474,7 @@ export default function AutopsyPage() {
 
   function skipQuizWord() {
     const q = quizRef.current;
-    if (!q) return;
+    if (!q || findingRef.current) return; // a point-check is mid-flight
     clearQuizTimers();
     setStuck(null);
     const item = practiceRef.current[q.index];
@@ -704,7 +713,7 @@ export default function AutopsyPage() {
                 </p>
                 {quiz.stage === "point" && (
                   <button
-                    onClick={() => void checkPointResult(false)}
+                    onClick={() => void checkPointResult()}
                     disabled={finding}
                     className="btn-accent press mt-3 flex w-full items-center justify-center gap-1.5 py-2.5 disabled:opacity-50"
                   >
