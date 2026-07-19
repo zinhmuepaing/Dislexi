@@ -39,12 +39,36 @@ Gates green: `npx tsx scripts/logic-tests.mts` ✅ · `npx eslint .` ✅ ·
 `npm run build` ✅ · prod-server smoke: /exam-prep renders, only expected
 camera-permission errors in a devices-less browser ✅.
 
-**NEXT:** on-device test of word scope (point mid-line, expect the pointed
-word not the first word); check pass-2 chip legibility on real print (chips
-sit above words — verify they don't collide with the line above at typical
-worksheet line spacing); /api/point latency with two calls. Older open items
-below (eighth session ⚠ drift bug: user says line-level is fixed on device —
-treat that section as resolved unless handheld drift reappears).
+**On-device round 1 (dense TP worksheet, user videos analyzed frame-by-frame):**
+- Word pass WORKS mechanically (read "-phase", "cos0", "wire" — mid/end-line
+  words near the tip, never the line's first word → the original word bug is
+  gone).
+- Handheld video: both misses were the KNOWN scan-vs-shot drift (chips drawn
+  at scanned coords on a moved page) — dense line pitch turns small drift
+  into ±1 line; big text absorbs it. Fix when needed: re-OCR the fresh shot
+  per "read this" (PROGRESS 8th-session option 2).
+- Stand video: finger works; PEN pointing fails (prompts describe a hand/
+  fingertip only → found:false or improvised pick). User: pen support NOT
+  needed — finger only.
+- Remaining finger failures on the dense sheet ("installation"→"supply",
+  "single-phase"→"transmission"): pass-1 LINE off by one, word x-position
+  right — the model couldn't trace from a mid-line fingertip to a left-edge
+  chip half a page away on tilted dense print.
+
+**Fix #2 (this session): line bands + dual chips.** `drawMarks` line mode now
+paints a translucent alternating band (blue/amber, α≈0.15) over each full
+line box UNDER the chips, and draws the SAME numbered chip at BOTH ends of
+every line; `locatePointedMark` prompt updated (fingertip → touched band →
+that band's number; never trace across the page). Word-pass drawing
+unchanged. Gates green (logic-tests, eslint, build). NOT committed yet.
+
+**NEXT:** on-device retest on the dense worksheet (point mid-line at
+"installation" / "single-phase" — expect the exact word); if line picks still
+slip on handheld video, implement re-OCR-per-point; /api/point two-pass
+latency is ~7–10 s point→speech — if demos need faster, crop pass 2 to the
+picked line's neighborhood. Handwritten OCR-garbage lines are still
+selectable and read verbatim ("=31×415×6209×0.8") — consider a confidence
+floor for selectable units.
 
 ## RESUME FROM HERE (2026-07-19, eighth session — set-of-marks pointing branch)
 

@@ -112,28 +112,18 @@ export async function drawMarks(
   const sx = canvas.width / Math.max(1, boxSpace.width);
   const sy = canvas.height / Math.max(1, boxSpace.height);
 
-  for (const mark of marks) {
+  const rectOf = (mark: { box: [number, number][] }) => {
     const ys = mark.box.map(([, y]) => y);
     const xs = mark.box.map(([x]) => x);
-    const top = Math.min(...ys) * sy;
-    const bottom = Math.max(...ys) * sy;
-    const left = Math.min(...xs) * sx;
-    const right = Math.max(...xs) * sx;
-    let cx: number;
-    let cy: number;
-    let r: number;
-    if (placement === "above") {
-      // Word chip: smaller, centered above the word; clamped inside the frame.
-      r = Math.min(18, Math.max(9, (bottom - top) * 0.55));
-      cx = Math.min(canvas.width - r - 2, Math.max(r + 2, (left + right) / 2));
-      cy = Math.max(r + 2, top - r - 4);
-    } else {
-      // Line chip sits just left of the line; clamped inside the frame.
-      r = Math.min(26, Math.max(12, (bottom - top) * 0.75));
-      cy = (top + bottom) / 2;
-      cx = Math.max(r + 2, left - r - 6);
-    }
+    return {
+      top: Math.min(...ys) * sy,
+      bottom: Math.max(...ys) * sy,
+      left: Math.min(...xs) * sx,
+      right: Math.max(...xs) * sx,
+    };
+  };
 
+  const chip = (cx: number, cy: number, r: number, n: number) => {
     ctx.beginPath();
     ctx.arc(cx, cy, r, 0, Math.PI * 2);
     ctx.fillStyle = "#ffffff";
@@ -145,7 +135,38 @@ export async function drawMarks(
     ctx.font = `bold ${Math.round(r * 1.1)}px system-ui, sans-serif`;
     ctx.textAlign = "center";
     ctx.textBaseline = "middle";
-    ctx.fillText(String(mark.n), cx, cy + r * 0.05);
+    ctx.fillText(String(n), cx, cy + r * 0.05);
+  };
+
+  if (placement === "left") {
+    // Translucent alternating band over each full line FIRST (under the
+    // chips): on dense/tilted worksheets the model cannot reliably trace from
+    // a mid-line fingertip to a left-edge chip half a page away — it slipped
+    // one line either way. The band makes line membership local to the
+    // fingertip instead of an association across the page.
+    for (const mark of marks) {
+      const { top, bottom, left, right } = rectOf(mark);
+      ctx.fillStyle = mark.n % 2 === 1 ? "rgba(37,99,235,0.14)" : "rgba(234,179,8,0.16)";
+      ctx.fillRect(left, top, right - left, bottom - top);
+    }
+  }
+
+  for (const mark of marks) {
+    const { top, bottom, left, right } = rectOf(mark);
+    if (placement === "above") {
+      // Word chip: smaller, centered above the word; clamped inside the frame.
+      const r = Math.min(18, Math.max(9, (bottom - top) * 0.55));
+      const cx = Math.min(canvas.width - r - 2, Math.max(r + 2, (left + right) / 2));
+      const cy = Math.max(r + 2, top - r - 4);
+      chip(cx, cy, r, mark.n);
+    } else {
+      // Line chips at BOTH ends of the band (same number), clamped inside the
+      // frame — whichever end the finger is nearer, a chip is close by.
+      const r = Math.min(26, Math.max(12, (bottom - top) * 0.75));
+      const cy = (top + bottom) / 2;
+      chip(Math.max(r + 2, left - r - 6), cy, r, mark.n);
+      chip(Math.min(canvas.width - r - 2, right + r + 6), cy, r, mark.n);
+    }
   }
 
   return canvas.toDataURL("image/jpeg", 0.85);
