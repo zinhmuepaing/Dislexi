@@ -23,10 +23,9 @@
 
 import * as sdk from "microsoft-cognitiveservices-speech-sdk";
 import { audioContext, decodeAudio } from "@/lib/audio";
+import { getSettings } from "@/lib/settings";
 
 const TOKEN_TTL_MS = 8 * 60 * 1000;
-/** Natural Singapore-English neural voice (Azure southeastasia). */
-const VOICE = "en-SG-LunaNeural";
 const SYNTH_CACHE_MAX = 24;
 
 let cachedToken: { token: string; region: string; fetchedAt: number } | null = null;
@@ -73,17 +72,29 @@ const synthCache = new Map<string, Promise<SynthesizedSpeech>>();
  * Cached (LRU-ish) — repeated words (autopsy speak → blend) skip the network.
  */
 export function synthesizeSpeech(text: string): Promise<SynthesizedSpeech> {
-  const cached = synthCache.get(text);
+  // Voice + rate come from user Settings (P5). Cache per voice+rate+text.
+  const { voice, rate } = getSettings();
+  const key = `${voice}|${rate}|${text}`;
+  const cached = synthCache.get(key);
   if (cached) return cached;
 
   const job = (async () => {
     const { token, region } = await getToken();
     const config = sdk.SpeechConfig.fromAuthorizationToken(token, region);
-    config.speechSynthesisVoiceName = VOICE;
+    config.speechSynthesisVoiceName = voice;
     // MP3 keeps payloads small; decodeAudioData handles it everywhere.
     config.speechSynthesisOutputFormat =
       sdk.SpeechSynthesisOutputFormat.Audio24Khz48KBitRateMonoMp3;
     config.setProperty(sdk.PropertyId.SpeechServiceResponse_RequestWordBoundary, "true");
+
+    // Rate needs SSML (<prosody>). Skip SSML when the text has XML-special
+    // chars so wordBoundary offsets (karaoke) stay exact — verbatim text is
+    // never altered either way (§5.4).
+    const useSsml = rate !== 1 && !/[<>&]/.test(text);
+    const pct = `${rate >= 1 ? "+" : ""}${Math.round((rate - 1) * 100)}%`;
+    const ssmlPrefix = `<speak version="1.0" xmlns="http://www.w3.org/2001/10/synthesis" xml:lang="en-US"><voice name="${voice}"><prosody rate="${pct}">`;
+    const ssml = `${ssmlPrefix}${text}</prosody></voice></speak>`;
+    const textStart = useSsml ? ssmlPrefix.length : 0; // subtract SSML prefix from offsets
 
     // null audio config = synthesize to result.audioData, no auto-playback.
     const synth = new sdk.SpeechSynthesizer(config, null as unknown as sdk.AudioConfig);
@@ -91,34 +102,33 @@ export function synthesizeSpeech(text: string): Promise<SynthesizedSpeech> {
     synth.wordBoundary = (_, e) => {
       boundaries.push({
         offsetMs: e.audioOffset / 10_000, // 100-ns ticks → ms
-        charStart: e.textOffset,
+        charStart: Math.max(0, e.textOffset - textStart),
         charLength: e.wordLength,
       });
     };
 
     const audioData = await new Promise<ArrayBuffer>((resolve, reject) => {
-      synth.speakTextAsync(
-        text,
-        (result) => {
-          synth.close();
-          if (result.reason === sdk.ResultReason.SynthesizingAudioCompleted) {
-            resolve(result.audioData);
-          } else {
-            reject(new Error(`TTS failed: ${result.errorDetails || result.reason}`));
-          }
-        },
-        (err) => {
-          synth.close();
-          reject(new Error(String(err)));
-        },
-      );
+      const onResult = (result: sdk.SpeechSynthesisResult) => {
+        synth.close();
+        if (result.reason === sdk.ResultReason.SynthesizingAudioCompleted) {
+          resolve(result.audioData);
+        } else {
+          reject(new Error(`TTS failed: ${result.errorDetails || result.reason}`));
+        }
+      };
+      const onErr = (err: string) => {
+        synth.close();
+        reject(new Error(String(err)));
+      };
+      if (useSsml) synth.speakSsmlAsync(ssml, onResult, onErr);
+      else synth.speakTextAsync(text, onResult, onErr);
     });
 
     return { buffer: await decodeAudio(audioData), boundaries };
   })();
 
-  synthCache.set(text, job);
-  job.catch(() => synthCache.delete(text)); // never cache failures
+  synthCache.set(key, job);
+  job.catch(() => synthCache.delete(key)); // never cache failures
   if (synthCache.size > SYNTH_CACHE_MAX) {
     const oldest = synthCache.keys().next().value;
     if (oldest !== undefined) synthCache.delete(oldest);

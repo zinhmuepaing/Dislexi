@@ -33,6 +33,7 @@ import { SessionLogger } from "@/lib/event-queue";
 import { buildSentences, buildParagraphs, Sentence, localWordAt } from "@/lib/sentences";
 import { resolveVoiceCommand, ReadScope } from "@/lib/voice-commands";
 import { startVoiceListener, VoiceListener } from "@/lib/stt";
+import { getSettings, setSettings } from "@/lib/settings";
 
 interface OcrResponse {
   blocks: OcrBox[];
@@ -53,7 +54,6 @@ interface UnitSet {
 }
 
 const SCAN_SETTLE_MS = 900;
-const SCOPE_KEY = "dislexi.readScope";
 const SCOPES: { id: ReadScope; label: string }[] = [
   { id: "word", label: "Word" },
   { id: "sentence", label: "Sentence" },
@@ -162,11 +162,7 @@ export default function ExamPrepPage() {
   function applyScope(next: ReadScope) {
     scopeRef.current = next;
     setScope(next);
-    try {
-      localStorage.setItem(SCOPE_KEY, next);
-    } catch {
-      /* private mode */
-    }
+    setSettings({ scope: next });
     rebuildUnits();
     if (scanRef.current) setStatus(`Reading by ${next}. Point and say “read this”.`);
   }
@@ -356,14 +352,10 @@ export default function ExamPrepPage() {
     installAudioUnlock();
     primeSpeech();
     const scopeRestore = setTimeout(() => {
-      try {
-        const stored = localStorage.getItem(SCOPE_KEY) as ReadScope | null;
-        if (stored === "word" || stored === "paragraph") {
-          scopeRef.current = stored;
-          setScope(stored);
-        }
-      } catch {
-        /* private mode */
+      const stored = getSettings().scope;
+      if (stored === "word" || stored === "paragraph") {
+        scopeRef.current = stored;
+        setScope(stored);
       }
     }, 0);
     SessionLogger.start("exam_prep").then((l) => {
