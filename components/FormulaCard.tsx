@@ -42,16 +42,21 @@ export function FormulaCard({ formula, region }: { formula: string; region: Regi
 
   return (
     <div
-      className="fadein pointer-events-none absolute z-10 -translate-x-1/2 rounded-xl border-[1.5px] border-[var(--ink)] bg-[var(--paper)] px-2.5 py-1.5 shadow-[0_6px_18px_-6px_rgba(34,48,63,0.5)]"
+      // w-max sizes the card to the formula's one-line width so short
+      // equations never wrap. The cap is VIEWPORT-relative (86vw), not
+      // parent-relative: KaTeX renders each part as an inline-block that can
+      // break between parts, and the camera overlay's box is narrow, so a
+      // `%` cap would shrink the card back down and force multi-line breaks
+      // (the reported bug). Only formulas wider than 86vw hit the cap + wrap.
+      className="fadein pointer-events-none absolute z-10 w-max max-w-[86vw] -translate-x-1/2 rounded-xl border-[1.5px] border-[var(--ink)] bg-[var(--paper)] px-2.5 py-1.5 shadow-[0_6px_18px_-6px_rgba(34,48,63,0.5)]"
       style={{
         left: `${cx * 100}%`,
         top: above ? undefined : `${(region.y + region.h) * 100 + 2}%`,
         bottom: above ? `${(1 - region.y) * 100 + 2}%` : undefined,
-        maxWidth: "88%",
       }}
     >
       <div
-        className="katex-formula overflow-x-auto text-[var(--ink)]"
+        className="katex-formula text-[var(--ink)]"
         style={{ fontSize: "clamp(15px, 4.4vw, 22px)" }}
         dangerouslySetInnerHTML={{ __html: html }}
       />
