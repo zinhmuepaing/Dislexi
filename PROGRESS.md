@@ -1,5 +1,40 @@
 # PROGRESS.md — Dislexi build session log
 
+## RESUME FROM HERE (2026-07-21, tenth session — REWORK 4 tutoring LaTeX + streaming)
+
+Branch **`feature/tutoring-latex-streaming`** off `paing-backend-uiux`, one
+commit `fecdbdc`. NOT pushed, no PR yet. Full plan: IMPLEMENTATION_PLAN.md
+"REWORK 4". After pulling, run `npm install` (added `katex` + `@types/katex`).
+
+Delivered (all gates green — logic-tests, eslint, build; live E2E verified):
+- **Per-step LaTeX on the camera feed.** `TutorStep.formula?` (KaTeX body);
+  `components/FormulaCard.tsx` renders ONE solid high-contrast card offset
+  from the step's `region` (formula never on worksheet noise), self-hosted
+  KaTeX, keyed by step → one at a time, clears before the next. Fixes the old
+  `max-w-[38%]` "lightweigh" write-label truncation.
+- **Incremental streaming.** `/api/tutor` now emits `{step,index}` per
+  completed step then `{done}` (contract in ARCHITECTURE §6/§8). Pure parsers
+  `scanTopLevelObjects` + `stepsFromStream` in `lib/tutor-model.ts` (tested).
+  Client narrates/shows Step 1 while later steps generate — **first step
+  ~2.8 s vs ~10 s** for the full response. Prompt asks for finer steps (3–8),
+  one bite-sized formula per math/science step, aids pointing-only.
+- **Constraint hit + resolved:** claude-sonnet-4-6 REJECTS assistant prefill
+  ("conversation must end with a user message"). The planned `{"steps": [`
+  prefill was dropped; strict-JSON prompt opens the array on its own and
+  `stepsFromStream` strips the wrapper. If a future model supports prefill,
+  re-adding it shaves the leading token latency.
+- Client narration loop synth-per-step (prefetch next), reveal at audio
+  start, cancel on manual tap / retake / new question.
+
+**Business/pitch:** created `PITCH_READINESS.md` (checkbox gap-list vs the new
+official judging weights — Market Readiness 40% + Business Viability 30%);
+biggest gaps are external user-validation data + a revenue/unit-economics
+slide, not code. (Committed with this branch.)
+
+**NEXT:** on-device test — LaTeX legibility/placement on real print, one-card-
+at-a-time clearing, audio↔formula sync on a real math AND a science worksheet;
+`/api/tutor` latency on the phone. Then merge decision.
+
 ## RESUME FROM HERE (2026-07-20, ninth session — word-granularity set-of-marks)
 
 Still on **branch `feature/set-of-marks-pointing`**. User confirmed the
