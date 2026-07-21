@@ -216,7 +216,7 @@ Analytics (session-end and Telegram ranges) are SQL aggregates over `events`: co
 | Route | Method | In | Out |
 |---|---|---|---|
 | `/api/ocr` | POST | `{ imageBase64 }` | `{ blocks: [{ text, confidence, box: [[x,y]×4] }] }` |
-| `/api/tutor` | POST | `{ imageBase64, question, history? }` | **SSE stream**: `{delta}` text chunks, then `{steps:[{say,region}]}` final frame |
+| `/api/tutor` | POST | `{ imageBase64, question, history?, lines? }` | **SSE stream** (incremental, REWORK 4): one `{step,index}` frame per step as it finishes generating (`step` = `{say,region,formula?,aids?}`), then `{done:true}`. Assistant-prefill `{"steps":[` cuts latency. |
 | `/api/azure-token` | GET | — | `{ token, region }` |
 | `/api/sessions` | POST | `{ mode }` | `{ sessionId }` |
 | `/api/events` | POST | `{ sessionId, events: [...] }` (batched every ~5 s and on end) | `{ ok: true }` |
@@ -243,7 +243,7 @@ Analytics (session-end and Telegram ranges) are SQL aggregates over `events`: co
 
 **Exam-Prep** *(flow amended 2026-07-17 — point-to-read)*: enter → spoken "session logging started" + mic permission prompt → camera ready → AUTO scan (one frame captured, preview stays live) → `/api/ocr` → continuous fingertip loop (~9 fps, smoothed) → dwell on a line (or say "read this" for the pointed line instantly) → `/api/azure-token` (cached) → TTS speaks verbatim through the shared WebAudio context, `wordBoundary` drives karaoke highlight → event logged → ... → end session → `/api/session-end` stats page → client renders charts (Chart.js), generates PDF (jsPDF) + XLSX (SheetJS) → `/api/report-upload` → Telegram.
 
-**AI Tutoring:** question (voice or text) → capture+flip, freeze → `/api/tutor` SSE → stream narration text as it arrives (start TTS on first complete step), highlight each step's `region` on the frozen frame in sync → follow-ups append to `history`.
+**AI Tutoring:** question (voice or text) → capture+flip, freeze → OCR line map → `/api/tutor` SSE → each step streams in as it finishes (§6); the client narrates + shows Step 1 (its `region` highlight, pointing aids, and one KaTeX `formula` card on the frozen frame) while later steps generate. Exactly ONE formula card at a time — it clears before the next step (REWORK 4). Follow-ups append to `history`.
 
 **Autopsy** *(flow amended 2026-07-17 — point-to-select)*: AUTO scan → dwell on a word → speak that word only, log `stuck_word` → KEEP pointing at the same word → split box into grapheme chunks → gapless sweep (clips pre-decoded, scheduled back-to-back on the WebAudio clock) playing `/public/phonemes/{id}.mp3` → blend: TTS speaks the whole word once (pre-synthesized in parallel) → "now trace it" → ~5 fps MediaPipe loop verifies fingertip inside word box with net left-to-right motion → chime, log `trace_complete` with `grapheme` → back to pointing on the same scan.
 

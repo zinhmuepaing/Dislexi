@@ -6,6 +6,69 @@ each phase ends with a verification gate.
 
 ---
 
+# REWORK 4 2026-07-20 (Tutoring: on-paper LaTeX + streaming) — ACTIVE
+
+Branch `feature/tutoring-latex-streaming`. Keep the current tutoring FLOW
+(ask → freeze → narrated steps with highlights on the paper). Team decisions:
+
+- **Explanation text unchanged** — the per-step transcription stays behind the
+  "show text" toggle; NO new floating text panel.
+- **Math/science formulas render as LaTeX ON the camera feed**, alongside the
+  pointing marks (circle/arrow/highlight), so the student's eyes never
+  ping-pong between paper and a bottom panel (ADHD/dyslexia working memory).
+- **Crowding fix:** each on-paper formula sits in ONE solid high-contrast card
+  (paper bg, ink border, shadow), offset from the referenced text so LaTeX
+  never sits on worksheet noise. Flexible width → fixes the "lightweigh"
+  truncation from the old `max-w-[38%]` write labels.
+- **Strict one-at-a-time:** exactly one formula card on the paper at a time;
+  it unmounts completely (React key per step) before the next step's appears.
+- **Bite-sized:** on-paper LaTeX = only that step's operation; the audio
+  explains the reasoning.
+- **Data shape:** FLAT finer steps — each step = one spoken line + at most one
+  LaTeX formula (+ its anchor) + pointing aids. Several formulas in sequence =
+  several steps, each shown then cleared. (Realizes "reveal one-by-one,
+  cleared between" without nested beats.)
+- **Streaming:** don't wait for the full response — parse each step object as
+  it finishes and emit it; narrate/show Step 1 while later steps stream.
+  (Assistant prefill was planned but claude-sonnet-4-6 REJECTS prefill —
+  "conversation must end with a user message" — so it's dropped; the
+  strict-JSON prompt makes the model open with `{"steps": [` on its own and
+  `stepsFromStream` parses the array incrementally. Verified: first step at
+  ~2.8 s vs ~10 s for the full response.)
+- **LaTeX:** KaTeX, self-hosted (no CDN; no service worker).
+- Compliance: tutoring is the AI path (rule 3 allows model content here);
+  Exam-Prep verbatim reading is untouched.
+
+Phases:
+
+- [x] **T0 — Deps + docs.** Add `katex`; note the incremental-SSE contract in
+  ARCHITECTURE §6/§8 (now per-step `{step,index}` frames, then `{done}`).
+- [x] **T1 — Schema + prompt.** `TutorStep` gains `formula?` (LaTeX); the card
+  is placed at the step's existing `region` (no separate anchor needed).
+  Prompt: finer steps (3–8), one bite-sized LaTeX operation per math/science
+  step (KaTeX-compatible), no formula on plain-language steps; aids are
+  pointing-only (no `write` text); strict JSON.
+- [x] **T2 — Streaming route.** Pure incremental parser (`scanTopLevelObjects`
+  + `stepsFromStream`, brace/string-aware, tested); `/api/tutor` resolves each
+  step's anchors/formula server-side as its object completes, emits
+  `data:{step,index}` then `data:{done}`. Legacy `{delta}` frames dropped
+  (client shows the thinking state, never raw output).
+- [x] **T3 — Client streaming narration.** Consume `{step}` frames; synth +
+  play each step's audio on arrival (prefetch next for near-gapless), reveal
+  its formula card + marks AT audio start, clear on advance — strict sync.
+  "Show text" transcription accumulates streamed steps.
+- [x] **T4 — FormulaCard (KaTeX).** Self-hosted KaTeX render; solid offset
+  card, flexible width, one-at-a-time by key; retire the truncating `write`
+  label for formulas (short numeric results may still print, but in a card).
+- [x] **T5 — Verify.** build + eslint + logic-tests (incremental parser);
+  live tutor E2E on a math/science worksheet: LaTeX renders, one card at a
+  time, Step 1 shows fast while later steps stream, audio stays synced.
+
+Cross-cutting: build + eslint + logic-tests green per phase; new dep limited
+to `katex`; self-hosted; secrets server-side only.
+
+---
+
 # REWORK PLAN 2026-07-18 (post team-testing feedback) — ACTIVE
 
 Approved by the team 2026-07-18. Original build plan (below) is complete;
