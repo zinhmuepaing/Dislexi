@@ -16,6 +16,7 @@
     "hyphenation.en-us": "^0.2.1",
     "hypher": "^0.2.5",
     "jspdf": "^4.2.1",
+    "katex": "^0.18.1",
     "lottie-web": "^5.13.0",
     "lucide-react": "^1.25.0",
     "microsoft-cognitiveservices-speech-sdk": "^1.50.0",
@@ -26,6 +27,7 @@
   },
   "devDependencies": {
     "@tailwindcss/postcss": "^4",
+    "@types/katex": "^0.16.8",
     "@types/node": "^20",
     "@types/react": "^19",
     "@types/react-dom": "^19",

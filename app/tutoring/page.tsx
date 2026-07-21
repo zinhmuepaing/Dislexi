@@ -20,7 +20,8 @@ import { useEffect, useRef, useState } from "react";
 import Link from "next/link";
 import { ChevronLeft, Mic, MicOff, Send, Camera, Eye, EyeOff } from "lucide-react";
 import { CameraStage, CameraStageHandle, CapturedFrame } from "@/components/CameraStage";
-import { speak, stopSpeaking, announce, primeSpeech, speakSteps } from "@/lib/speech";
+import { FormulaCard } from "@/components/FormulaCard";
+import { speak, stopSpeaking, announce, primeSpeech, synthesizeSpeech } from "@/lib/speech";
 import { installAudioUnlock } from "@/lib/audio";
 import { SessionLogger } from "@/lib/event-queue";
 import { startVoiceListener, VoiceListener } from "@/lib/stt";
@@ -43,6 +44,7 @@ interface TutorStep {
   say: string;
   region: TutorRegion;
   aids?: TutorAid[];
+  formula?: string;
 }
 
 interface TutorLine {
@@ -166,7 +168,7 @@ function AidsOverlay({ region, aids }: { region: TutorRegion | null; aids: Tutor
         return (
           <span
             key={`w${i}`}
-            className="fadein absolute max-w-[38%] -translate-x-1/2 rounded bg-white/90 px-1 text-center font-display text-[2.9vw] font-extrabold leading-tight text-[var(--point)] shadow-sm sm:text-[13px]"
+            className="fadein absolute w-fit max-w-[80%] -translate-x-1/2 whitespace-nowrap rounded bg-[var(--paper)] px-1.5 py-0.5 text-center font-display text-[3vw] font-extrabold leading-tight text-[var(--point)] shadow-sm sm:text-[14px]"
             style={{
               left: `${cx * 100}%`,
               top: above ? undefined : `${(aid.region.y + aid.region.h) * 100 + 1}%`,
@@ -190,6 +192,10 @@ export default function TutoringPage() {
   const linesRef = useRef<TutorLine[] | null>(null);
   const historyRef = useRef<TutorTurn[]>([]);
   const listenerRef = useRef<VoiceListener | null>(null);
+  // Streaming: steps arrive incrementally; the narration loop reads the latest.
+  const stepsRef = useRef<TutorStep[]>([]);
+  const streamDoneRef = useRef(false);
+  const narrationRun = useRef(0);
 
   const [question, setQuestion] = useState("");
   const [frame, setFrame] = useState<CapturedFrame | null>(null);
@@ -281,6 +287,38 @@ export default function TutoringPage() {
     }
   }
 
+  /**
+   * Narrate steps as they stream in: wait for step i, synth+play its audio
+   * (prefetching i+1 for near-gapless playback), reveal its formula/marks at
+   * audio start, advance. Cancelled by bumping narrationRun.
+   */
+  async function runNarration(run: number) {
+    narratingRef.current = true;
+    let i = 0;
+    while (narrationRun.current === run) {
+      while (i >= stepsRef.current.length && !streamDoneRef.current) {
+        await new Promise((r) => setTimeout(r, 50));
+        if (narrationRun.current !== run) return;
+      }
+      if (i >= stepsRef.current.length) break; // stream done, no more steps
+      const step = stepsRef.current[i];
+      const ready = synthesizeSpeech(step.say).catch(() => null); // this step's audio
+      const next = stepsRef.current[i + 1];
+      if (next) void synthesizeSpeech(next.say).catch(() => {}); // prefetch next
+      await ready;
+      if (narrationRun.current !== run) return;
+      setActiveStep(i); // reveal formula + marks in sync with audio start
+      try {
+        await speak(step.say); // cache hit → plays immediately
+      } catch {
+        /* keep advancing on TTS failure */
+      }
+      if (narrationRun.current !== run) return;
+      i += 1;
+    }
+    if (narrationRun.current === run) narratingRef.current = false;
+  }
+
   async function ask(text?: string) {
     const q = (text ?? question).trim();
     if (!q || busyRef.current) return;
@@ -288,7 +326,9 @@ export default function TutoringPage() {
     const captured = frameRef.current ?? stage.current?.captureFrame() ?? null;
     if (!captured) return;
     stopSpeaking();
-    narratingRef.current = false;
+    const run = ++narrationRun.current; // cancel any prior narration
+    stepsRef.current = [];
+    streamDoneRef.current = false;
     frameRef.current = captured;
     setFrame(captured);
     busyRef.current = true;
@@ -313,10 +353,13 @@ export default function TutoringPage() {
       });
       if (!res.ok || !res.body) throw new Error(`tutor ${res.status}`);
 
+      // Steps stream in one at a time; start narrating as soon as the first
+      // arrives (busy/thinking clears on the first step).
+      void runNarration(run);
+
       const reader = res.body.getReader();
       const decoder = new TextDecoder();
       let buffer = "";
-      let finalSteps: TutorStep[] = [];
 
       while (true) {
         const { done, value } = await reader.read();
@@ -327,33 +370,43 @@ export default function TutoringPage() {
         for (const f of frames) {
           const payload = f.replace(/^data: /, "").trim();
           if (!payload || payload === "[DONE]") continue;
-          const msg = JSON.parse(payload) as { delta?: string; steps?: TutorStep[]; error?: string };
-          if (msg.steps) finalSteps = msg.steps;
+          const msg = JSON.parse(payload) as {
+            step?: TutorStep;
+            index?: number;
+            done?: boolean;
+            error?: string;
+          };
           if (msg.error) throw new Error(msg.error);
+          if (msg.step) {
+            if (narrationRun.current !== run) continue; // superseded
+            stepsRef.current = [...stepsRef.current, msg.step];
+            setSteps(stepsRef.current);
+            if (busyRef.current) {
+              busyRef.current = false;
+              setBusy(false); // first step in → drop the thinking state
+            }
+          }
+          if (msg.done) streamDoneRef.current = true;
         }
       }
+      streamDoneRef.current = true;
 
-      setSteps(finalSteps);
-      historyRef.current = [
-        ...historyRef.current,
-        { role: "user", content: q },
-        { role: "assistant", content: JSON.stringify({ steps: finalSteps }) },
-      ];
-      setQuestion("");
-      if (finalSteps.length === 0) {
-        setErrorMsg("I couldn't work that one out — try asking in a different way.");
-      } else {
-        narratingRef.current = true;
-        void speakSteps(
-          finalSteps.map((s) => s.say),
-          (i) => setActiveStep(i),
-        ).finally(() => {
-          narratingRef.current = false;
-        });
+      if (narrationRun.current === run) {
+        setQuestion("");
+        if (stepsRef.current.length === 0) {
+          setErrorMsg("I couldn't work that one out — try asking in a different way.");
+        } else {
+          historyRef.current = [
+            ...historyRef.current,
+            { role: "user", content: q },
+            { role: "assistant", content: JSON.stringify({ steps: stepsRef.current }) },
+          ];
+        }
       }
     } catch (err) {
       console.error(err);
-      setErrorMsg("Sorry, tutoring hit a snag — please ask again.");
+      streamDoneRef.current = true;
+      if (narrationRun.current === run) setErrorMsg("Sorry, tutoring hit a snag — please ask again.");
     } finally {
       busyRef.current = false;
       setBusy(false);
@@ -362,7 +415,10 @@ export default function TutoringPage() {
 
   function retake() {
     stopSpeaking();
+    narrationRun.current += 1; // cancel narration
     narratingRef.current = false;
+    stepsRef.current = [];
+    streamDoneRef.current = false;
     stage.current?.unfreeze();
     frameRef.current = null;
     linesRef.current = null;
@@ -375,7 +431,9 @@ export default function TutoringPage() {
 
   const active = activeStep >= 0 ? steps[activeStep] : null;
 
+  // Manual tap on a step in the transcript — takes over from auto-narration.
   const playStep = (i: number) => {
+    narrationRun.current += 1; // stop the streaming narration loop
     stopSpeaking();
     narratingRef.current = true;
     setActiveStep(i);
@@ -390,6 +448,11 @@ export default function TutoringPage() {
     <main className="fixed inset-0 bg-[var(--ink)]">
       <CameraStage ref={stage} fullBleed>
         {active && <AidsOverlay region={active.region} aids={active.aids ?? []} />}
+        {/* One formula card at a time — keyed by step so it unmounts cleanly
+            before the next step's appears (REWORK 4). */}
+        {active?.formula && (
+          <FormulaCard key={activeStep} formula={active.formula} region={active.region} />
+        )}
       </CameraStage>
 
       {/* Top-left: back + title. */}

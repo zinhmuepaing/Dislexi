@@ -58,6 +58,12 @@ export interface TutorStep {
   say: string;
   region: TutorRegion;
   aids?: TutorAid[];
+  /**
+   * Bite-sized LaTeX for THIS step's math/science operation (KaTeX body, no
+   * `$` delimiters) — rendered in one solid card near `region` on the camera
+   * feed, one at a time (REWORK 4). Absent on plain-language steps.
+   */
+  formula?: string;
 }
 
 /** OCR line map sent by the client: index, verbatim text, NORMALIZED box. */
@@ -74,28 +80,28 @@ export interface TutorTurn {
 
 const SYSTEM_PROMPT = `You are a patient, encouraging tutor for a primary-school student in Singapore with dyslexia/ADHD. You are shown a photo of the worksheet lying in front of the student, plus their question about it.
 
-Explain step by step, one small idea at a time, in simple spoken English suitable for a child. Guide the student to the answer; do not just state it. Never diagnose, never comment on the student's ability or emotions.
+Explain step by step, ONE small idea per step, in simple spoken English suitable for a child. Guide the student to the answer; do not just state it. Never diagnose, never comment on the student's ability or emotions.
+
+Break the reasoning into MANY small steps (aim 3 to 8). Each step must be tiny enough that only ONE thing happens in it — one calculation, one comparison, one substitution. If you would show two formulas, make them two steps.
 
 Respond with STRICT JSON only — no prose, no markdown fences, nothing outside the JSON object.
 
 When the user message includes a WORKSHEET LINES list (index: text), DO NOT estimate coordinates. Anchor every step to a listed line instead:
 
-{"steps":[{"say":"<one short spoken sentence>","anchor":{"line":3,"phrase":"3/4"},"aids":[{"kind":"circle","line":3,"phrase":"3/4"},{"kind":"write","line":3,"phrase":"3/4","text":"=9/12"},{"kind":"arrow","line":3,"phrase":"3/4","toLine":5,"toPhrase":"blank"}]}]}
+{"steps":[{"say":"<one short spoken sentence>","anchor":{"line":3,"phrase":"3/4"},"formula":"\\\\frac{3}{4}=\\\\frac{9}{12}","aids":[{"kind":"circle","line":3,"phrase":"3/4"},{"kind":"arrow","line":3,"phrase":"3/4","toLine":5,"toPhrase":"blank"}]}]}
 
 Anchor rules:
 - "line": the index from the WORKSHEET LINES list the step talks about.
 - "phrase": the EXACT characters copied from that line that the step refers to (a number, a word, a blank). Omit "phrase" to mean the whole line.
-- "aids": optional, at most 3 per step. Draw the WORKING directly on the paper like a teacher would:
-  - "circle" or "box" marks an anchor (circle the numbers being compared).
-  - "write" prints a SHORT text (≤10 chars) on the paper next to its anchor — use it to show the actual working (e.g. text "=9/12", "×3", "12", a carry). This is the most important aid: SHOW the calculation on the page, do not just talk about it.
-  - "arrow" points from its anchor to "toLine"/"toPhrase".
+- "formula": for a MATH or SCIENCE step, the ONE bite-sized operation happening in THIS step, written as LaTeX (KaTeX syntax, no $ delimiters), e.g. "\\\\frac{3}{4}=\\\\frac{9}{12}" or "F=ma". It is shown on the worksheet, one at a time, while your "say" explains the reasoning aloud. Keep it short — just the operation, not the whole solution. OMIT "formula" on plain-language steps (no math). Never put more than one formula in a step.
+- "aids": optional, at most 3 per step, for POINTING only: "circle"/"box" mark an anchor, "arrow" points from its anchor to "toLine"/"toPhrase". Do NOT use aids to write text — use "formula" for that.
 
 Only when NO lines list is provided, fall back to:
 
-{"steps":[{"say":"...","region":{"x":0.31,"y":0.42,"w":0.2,"h":0.06}}]}
+{"steps":[{"say":"...","region":{"x":0.31,"y":0.42,"w":0.2,"h":0.06},"formula":"F=ma"}]}
 
 with region NORMALIZED (0-1) to the image. General rules:
-- "say": one short sentence to be read aloud. 2 to 6 steps total.
+- "say": one short sentence to be read aloud.
 - Every step must point at the exact part of the worksheet it talks about.
 - Follow-up questions continue the same worksheet; keep anchoring to the same lines/image.`;
 
@@ -140,6 +146,64 @@ function resolveAnchor(
  * map, anchors (and aids) resolve to OCR-derived rects; without one, raw
  * regions are clamped to 0-1 (legacy mode).
  */
+/** Map one raw step object → a resolved TutorStep (null if it has no `say`). */
+function mapRawStep(s: unknown, lines?: TutorLine[]): TutorStep | null {
+  const step = s as {
+    say?: unknown;
+    region?: Record<string, unknown>;
+    anchor?: { line?: unknown; phrase?: unknown };
+    aids?: unknown[];
+    formula?: unknown;
+  };
+
+  const say = String(step.say ?? "").trim();
+  if (!say) return null;
+
+  let region: TutorRegion | null = null;
+  if (lines?.length && step.anchor) {
+    region = resolveAnchor(step.anchor.line, step.anchor.phrase, lines);
+  }
+  if (!region) {
+    const r = step.region ?? {};
+    region = { x: clamp01(r.x), y: clamp01(r.y), w: clamp01(r.w), h: clamp01(r.h) };
+  }
+
+  const aids: TutorAid[] = [];
+  if (lines?.length && Array.isArray(step.aids)) {
+    for (const a of step.aids.slice(0, 3)) {
+      const aid = a as {
+        kind?: unknown;
+        line?: unknown;
+        phrase?: unknown;
+        toLine?: unknown;
+        toPhrase?: unknown;
+        text?: unknown;
+      };
+      if (aid.kind !== "box" && aid.kind !== "circle" && aid.kind !== "arrow" && aid.kind !== "write")
+        continue;
+      const r = resolveAnchor(aid.line, aid.phrase, lines);
+      if (!r) continue;
+      if (aid.kind === "arrow") {
+        const to = resolveAnchor(aid.toLine, aid.toPhrase, lines);
+        if (!to) continue;
+        aids.push({ kind: aid.kind, region: r, to });
+      } else if (aid.kind === "write") {
+        const text = String(aid.text ?? "").trim().slice(0, 16);
+        if (!text) continue;
+        aids.push({ kind: aid.kind, region: r, text });
+      } else {
+        aids.push({ kind: aid.kind, region: r });
+      }
+    }
+  }
+
+  const result: TutorStep = { say, region };
+  if (aids.length > 0) result.aids = aids;
+  const formula = String(step.formula ?? "").trim().slice(0, 120);
+  if (formula) result.formula = formula;
+  return result;
+}
+
 export function parseSteps(raw: string, lines?: TutorLine[]): TutorStep[] {
   let text = raw.trim();
   const fence = text.match(/```(?:json)?\s*([\s\S]*?)```/);
@@ -155,59 +219,66 @@ export function parseSteps(raw: string, lines?: TutorLine[]): TutorStep[] {
   }
   const rawSteps = (parsed as { steps?: unknown[] })?.steps;
   if (!Array.isArray(rawSteps)) return [];
+  return rawSteps.map((s) => mapRawStep(s, lines)).filter((s): s is TutorStep => s !== null);
+}
 
-  return rawSteps
-    .map((s) => {
-      const step = s as {
-        say?: unknown;
-        region?: Record<string, unknown>;
-        anchor?: { line?: unknown; phrase?: unknown };
-        aids?: unknown[];
-      };
-
-      let region: TutorRegion | null = null;
-      if (lines?.length && step.anchor) {
-        region = resolveAnchor(step.anchor.line, step.anchor.phrase, lines);
+/**
+ * Scan a partial streamed buffer for COMPLETE top-level `{…}` objects (the
+ * step objects inside the prefilled `{"steps": [` array). Brace-matched and
+ * string-aware, so nested objects and braces inside strings don't confuse it.
+ * Pure — covered by scripts/logic-tests.mts.
+ */
+export function scanTopLevelObjects(s: string): string[] {
+  const objects: string[] = [];
+  let depth = 0;
+  let start = -1;
+  let inStr = false;
+  let esc = false;
+  for (let i = 0; i < s.length; i++) {
+    const c = s[i];
+    if (inStr) {
+      if (esc) esc = false;
+      else if (c === "\\") esc = true;
+      else if (c === '"') inStr = false;
+      continue;
+    }
+    if (c === '"') inStr = true;
+    else if (c === "{") {
+      if (depth === 0) start = i;
+      depth++;
+    } else if (c === "}") {
+      depth--;
+      if (depth === 0 && start >= 0) {
+        objects.push(s.slice(start, i + 1));
+        start = -1;
       }
-      if (!region) {
-        const r = step.region ?? {};
-        region = { x: clamp01(r.x), y: clamp01(r.y), w: clamp01(r.w), h: clamp01(r.h) };
-      }
+    }
+  }
+  return objects;
+}
 
-      const aids: TutorAid[] = [];
-      if (lines?.length && Array.isArray(step.aids)) {
-        for (const a of step.aids.slice(0, 3)) {
-          const aid = a as {
-            kind?: unknown;
-            line?: unknown;
-            phrase?: unknown;
-            toLine?: unknown;
-            toPhrase?: unknown;
-            text?: unknown;
-          };
-          if (aid.kind !== "box" && aid.kind !== "circle" && aid.kind !== "arrow" && aid.kind !== "write")
-            continue;
-          const r = resolveAnchor(aid.line, aid.phrase, lines);
-          if (!r) continue;
-          if (aid.kind === "arrow") {
-            const to = resolveAnchor(aid.toLine, aid.toPhrase, lines);
-            if (!to) continue;
-            aids.push({ kind: aid.kind, region: r, to });
-          } else if (aid.kind === "write") {
-            const text = String(aid.text ?? "").trim().slice(0, 10);
-            if (!text) continue;
-            aids.push({ kind: aid.kind, region: r, text });
-          } else {
-            aids.push({ kind: aid.kind, region: r });
-          }
-        }
-      }
+/** Parse one complete step-object JSON string → TutorStep (null on failure). */
+export function parseStepObject(objJson: string, lines?: TutorLine[]): TutorStep | null {
+  try {
+    return mapRawStep(JSON.parse(objJson), lines);
+  } catch {
+    return null;
+  }
+}
 
-      const result: TutorStep = { say: String(step.say ?? "").trim(), region };
-      if (aids.length > 0) result.aids = aids;
-      return result;
-    })
-    .filter((s) => s.say.length > 0);
+/**
+ * From a partial streamed `{"steps": [ {…}, {…}, {partial…` buffer, return the
+ * COMPLETE step-object JSON strings so far: locate the steps array opener and
+ * scan its elements (brace/string-aware). Pure — covered by logic tests.
+ * (Assistant prefill isn't used — claude-sonnet-4-6 rejects it — so the buffer
+ * still carries the leading `{"steps": [`.)
+ */
+export function stepsFromStream(buffer: string): string[] {
+  const key = buffer.indexOf('"steps"');
+  if (key < 0) return [];
+  const bracket = buffer.indexOf("[", key);
+  if (bracket < 0) return [];
+  return scanTopLevelObjects(buffer.slice(bracket + 1));
 }
 
 export interface TutorRequest {
@@ -432,9 +503,17 @@ export async function locatePointedWordMark(
   }
 }
 
+/**
+ * Streams the tutor response and emits each step VIA `onStep` the moment its
+ * JSON object completes (REWORK 4) — so the client can show/narrate Step 1
+ * while later steps are still generating. Resolves with all emitted steps.
+ * (Assistant prefill is NOT used: claude-sonnet-4-6 rejects it; the strict-JSON
+ * system prompt makes the model open with `{"steps": [` on its own, and
+ * `stepsFromStream` parses the array elements incrementally.)
+ */
 export async function runTutor(
   { imageBase64, question, history, lines }: TutorRequest,
-  onDelta: (text: string) => void,
+  onStep: (step: TutorStep, index: number) => void,
 ): Promise<TutorStep[]> {
   // Sanitize the line map: cap size, force numeric indices/boxes.
   const lineMap: TutorLine[] = (lines ?? [])
@@ -445,9 +524,9 @@ export async function runTutor(
       box: { x: clamp01(l.box?.x), y: clamp01(l.box?.y), w: clamp01(l.box?.w), h: clamp01(l.box?.h) },
     }))
     .filter((l) => Number.isFinite(l.i) && l.text.trim().length > 0);
+  const usableLines = lineMap.length > 0 ? lineMap : undefined;
 
   const data = imageBase64.replace(/^data:image\/\w+;base64,/, "");
-  // The API rejects a media_type that doesn't match the actual bytes.
   const mediaType = sniffMediaType(data);
 
   const userText =
@@ -462,8 +541,6 @@ export async function runTutor(
     {
       role: "user" as const,
       content: [
-        // Text BEFORE image — per the DeskTutor reference, the model reads the
-        // question first, which improves region accuracy.
         { type: "text" as const, text: userText },
         {
           type: "image" as const,
@@ -476,28 +553,45 @@ export async function runTutor(
   const stream = client().messages.stream({
     model: TUTOR_MODEL,
     max_tokens: 4096,
-    system: [
-      {
-        type: "text",
-        text: SYSTEM_PROMPT,
-        cache_control: { type: "ephemeral" },
-      },
-    ],
+    system: [{ type: "text", text: SYSTEM_PROMPT, cache_control: { type: "ephemeral" } }],
     messages,
   });
 
+  // `body` accumulates the model's output. We re-scan the steps array for
+  // complete step objects on each delta and emit the newly-finished ones.
+  let body = "";
+  let emitted = 0;
+  const all: TutorStep[] = [];
+  const flush = () => {
+    const objs = stepsFromStream(body);
+    while (emitted < objs.length) {
+      const step = parseStepObject(objs[emitted], usableLines);
+      emitted += 1;
+      if (step) {
+        all.push(step);
+        onStep(step, all.length - 1);
+      }
+    }
+  };
+
   for await (const event of stream) {
     if (event.type === "content_block_delta" && event.delta.type === "text_delta") {
-      onDelta(event.delta.text);
+      body += event.delta.text;
+      flush();
     }
   }
 
-  const final = await stream.finalMessage();
-  const fullText = final.content
-    .filter((b): b is Anthropic.TextBlock => b.type === "text")
-    .map((b) => b.text)
-    .join("");
-  return parseSteps(fullText, lineMap.length > 0 ? lineMap : undefined);
+  // Fallback if deltas never fired (non-streaming path): rebuild from final.
+  if (body === "") {
+    const final = await stream.finalMessage();
+    body = final.content
+      .filter((b): b is Anthropic.TextBlock => b.type === "text")
+      .map((b) => b.text)
+      .join("");
+    flush();
+  }
+
+  return all;
 }
 
 const VOICE_INTENTS = new Set([

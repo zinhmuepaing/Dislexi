@@ -14,7 +14,13 @@ import {
 } from "../lib/hand-tracker";
 import { chunksFor, chunkPattern, normalizeWord } from "../lib/graphemes";
 import { computeStats } from "../lib/analytics";
-import { parseSteps, stripMarkdown } from "../lib/tutor-model";
+import {
+  parseSteps,
+  stripMarkdown,
+  scanTopLevelObjects,
+  parseStepObject,
+  stepsFromStream,
+} from "../lib/tutor-model";
 import { buildSentences, buildParagraphs, blockToSentenceMap, localWordAt } from "../lib/sentences";
 import { fastParseCommand } from "../lib/voice-commands";
 import { syllablesOf, coachingLines } from "../lib/syllables";
@@ -333,7 +339,7 @@ const box = (l: number, t: number, r: number, b: number): [number, number][] => 
     lines,
   );
   assert.equal(withWrite[0].aids?.[0].kind, "write");
-  assert.equal(withWrite[0].aids?.[0].text, "=9/12 long"); // trimmed to 10 chars
+  assert.equal(withWrite[0].aids?.[0].text, "=9/12 long overf"); // trimmed to 16 chars
   assert.ok(withWrite[0].aids?.[0].region); // resolved from the anchor
   // Unknown line index → falls back to the (clamped) raw region.
   const fallback = parseSteps(
@@ -341,6 +347,52 @@ const box = (l: number, t: number, r: number, b: number): [number, number][] => 
     lines,
   );
   assert.deepEqual(fallback[0].region, { x: 0.2, y: 0.2, w: 0.1, h: 0.1 });
+
+  // formula (LaTeX) parsed onto the step (REWORK 4).
+  const withFormula = parseSteps(
+    JSON.stringify({ steps: [{ say: "Convert.", anchor: { line: 0 }, formula: "\\frac{3}{4}=\\frac{9}{12}" }] }),
+    lines,
+  );
+  assert.equal(withFormula[0].formula, "\\frac{3}{4}=\\frac{9}{12}");
+  // no formula field → undefined, not empty string
+  const noFormula = parseSteps(JSON.stringify({ steps: [{ say: "Hi.", anchor: { line: 0 } }] }), lines);
+  assert.equal(noFormula[0].formula, undefined);
+}
+
+// ── scanTopLevelObjects + parseStepObject: incremental streaming (REWORK 4) ───
+{
+  // Brace/string-aware: nested objects and braces-in-strings don't split it.
+  const buf = '{"say":"a {b}","region":{"x":0}}, {"say":"two"} , {"say":"partial';
+  const objs = scanTopLevelObjects(buf);
+  assert.equal(objs.length, 2); // the partial third object is NOT emitted yet
+  assert.equal(objs[0], '{"say":"a {b}","region":{"x":0}}');
+  assert.equal(objs[1], '{"say":"two"}');
+  // Growing the buffer completes the third object.
+  const objs2 = scanTopLevelObjects(buf + ' three"} ]}');
+  assert.equal(objs2.length, 3);
+  assert.equal(objs2[2], '{"say":"partial three"}');
+  // escaped quote inside a string doesn't end the string early.
+  assert.equal(scanTopLevelObjects('{"say":"he said \\"hi\\" {x}"}').length, 1);
+  // parseStepObject maps one object → a resolved step.
+  const one = parseStepObject('{"say":"Look.","region":{"x":0.1,"y":0.2,"w":0.3,"h":0.05}}');
+  assert.equal(one?.say, "Look.");
+  assert.equal(parseStepObject("{ not json"), null);
+  assert.equal(parseStepObject('{"say":""}'), null); // empty say dropped
+
+  // stepsFromStream: strips the leading {"steps": [ wrapper, emits completed
+  // elements as the buffer grows (no assistant prefill — model streams the
+  // whole object).
+  assert.deepEqual(stepsFromStream(""), []);
+  assert.deepEqual(stepsFromStream('{"steps'), []); // opener not seen yet
+  assert.deepEqual(stepsFromStream('{"steps": ['), []); // array open, no elements
+  const partial = '{"steps": [ {"say":"one"}, {"say":"tw';
+  assert.deepEqual(stepsFromStream(partial), ['{"say":"one"}']); // only the complete one
+  const grown = partial + 'o [note]"}, {"say":"three"} ]}';
+  assert.deepEqual(stepsFromStream(grown), [
+    '{"say":"one"}',
+    '{"say":"tw' + 'o [note]"}',
+    '{"say":"three"}',
+  ]);
 }
 
 // ── buildSentences: group lines by punctuation + geometry, verbatim join ─────

@@ -1,13 +1,15 @@
 /**
- * POST /api/tutor — { imageBase64, question, history? } → SSE stream:
- *   data: {"delta":"<text chunk>"}     (repeated as tokens arrive)
- *   data: {"steps":[{"say":...,"region":{x,y,w,h}}]}   (final frame, regions 0-1)
+ * POST /api/tutor — { imageBase64, question, history?, lines? } → SSE stream
+ * (REWORK 4, incremental): one frame PER STEP as it finishes generating, then
+ * a done frame:
+ *   data: {"step":{"say":...,"region":{x,y,w,h},"formula"?,"aids"?},"index":0}
+ *   data: {"step":{...},"index":1}   … (Step 1 shows while later steps stream)
+ *   data: {"done":true}
  *   data: [DONE]
  *
  * Proxies to the reasoning adapter (lib/tutor-model.ts). This route never
  * calls the vendor API directly, so swapping Claude back to Huawei Cloud MaaS
- * (lib/maas.ts, ARCHITECTURE.md §5.3) touches only the adapter. The SSE
- * contract above is fixed either way.
+ * (lib/maas.ts, ARCHITECTURE.md §5.3) touches only the adapter.
  */
 
 import { NextRequest } from "next/server";
@@ -40,7 +42,7 @@ export async function POST(req: NextRequest) {
         controller.enqueue(encoder.encode(`data: ${JSON.stringify(payload)}\n\n`));
 
       try {
-        const steps = await runTutor(
+        await runTutor(
           {
             imageBase64,
             question,
@@ -48,9 +50,10 @@ export async function POST(req: NextRequest) {
             // OCR line map (adapter sanitizes) — enables anchored regions/aids.
             lines: Array.isArray(lines) ? (lines as TutorLine[]) : undefined,
           },
-          (delta) => send({ delta }),
+          // Emit each step the instant it finishes generating.
+          (step, index) => send({ step, index }),
         );
-        send({ steps });
+        send({ done: true });
         controller.enqueue(encoder.encode("data: [DONE]\n\n"));
       } catch (err) {
         console.error("/api/tutor failed:", err);
