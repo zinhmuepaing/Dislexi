@@ -1,5 +1,55 @@
 # PROGRESS.md — Dislexi build session log
 
+## RESUME FROM HERE (2026-07-23, eleventh session — WORD pointing: coarse-find + local classify)
+
+On `main` (pulled to `d4ac9bb`; run `npm install` after pulling — teammate's
+katex dep, else build fails on FormulaCard). This session: fixed the dense-
+worksheet WORD-scope mis-selection with the coarse-find + local-classify
+design (the diagram approach). NOT committed yet.
+
+**Why this, in one line:** every earlier attempt made the model reason about
+position across the WHOLE page (trace mid-line finger → far-left chip = ±1
+line slip; or cross-image transfer = attempt B). This keeps the fine decision
+LOCAL. Sentence/paragraph were never actually more accurate — same line pick,
+but those units span lines so a ±1 slip is absorbed; WORD is the only scope
+with zero tolerance (proof: the word pass can't return a word off the picked
+line, yet "installation"→"supply" crossed lines → pass 1 was wrong).
+
+**What shipped (WORD scope only; sentence/paragraph line pass untouched):**
+- Stage 1 coarse find — `locatePointer` on the CLEAN shot (coordinate mode of
+  /api/point, no marks). Always finds the finger on device; ±2–3 line vertical
+  error is fine, it only picks a neighborhood.
+- Stage 2 local classify — `wordsNearPoint` (NEW, pure, in `lib/marks.ts`,
+  tested) ranks the few word boxes near the tip: vertical band ±3 line-heights
+  (covers locatePointer's error), horizontal band ±0.14·width (the pointed x
+  is reliable), occlusion prior (words at/above the tip rank first). Chips
+  drawn ABOVE only those (proven off-the-hand geometry), model names the chip
+  (`granularity:"word"`, reused). Fallback = nearest candidate.
+- All single-image, no cross-image transfer, chips never on the hand, few+big
+  chips → the three things that killed attempts A/B are all avoided.
+- STAND-ONLY (user is on the phone stand): chips drawn from scan OCR boxes on
+  the shot; assumes scan≈shot alignment. Handheld drift NOT handled (re-OCR-
+  per-point is the fix if that ever comes back).
+- Reused existing API modes + model fns → change is one client flow
+  (`readViaPointer` split into `pointLine`/`pointWord` in exam-prep) + the pure
+  helper. `/api/point` and route unchanged.
+- **TEMPORARY raw-answer logging** added to all three pointing fns in
+  `lib/tutor-model.ts` (`console.log("[point] … raw:", raw)`) — so the next
+  on-device failure is diagnosable from Vercel function logs. REMOVE before
+  final merge.
+- autopsy pointing left on the old line-pass path (not the failing surface).
+
+Gates green: `npx tsx scripts/logic-tests.mts` ✅ (wordsNearPoint tests added)
+· `npx eslint .` ✅ · `npm run build` ✅ (after `npm install` for katex).
+
+**NEXT:** on-device retest (stand, finger) — the two known failures,
+"installation" and "single-phase" mid-line, should read the exact word.
+Check Vercel logs for the `[point]` raw lines to confirm stage 1 finds the
+finger and stage 2 returns the right chip. Tuning dials if needed:
+`wordsNearPoint` vBandLines/hBandFrac/max. Then REMOVE the temporary logs,
+and consider porting the same flow to autopsy `locateWord`. Latency = 2 model
+calls (coarse + classify), same as before.
+
 ## RESUME FROM HERE (2026-07-21, tenth session — REWORK 4 tutoring LaTeX + streaming)
 
 Branch **`feature/tutoring-latex-streaming`** off `paing-backend-uiux`, one
@@ -74,12 +124,52 @@ Gates green: `npx tsx scripts/logic-tests.mts` ✅ · `npx eslint .` ✅ ·
 `npm run build` ✅ · prod-server smoke: /exam-prep renders, only expected
 camera-permission errors in a devices-less browser ✅.
 
-**NEXT:** on-device test of word scope (point mid-line, expect the pointed
-word not the first word); check pass-2 chip legibility on real print (chips
-sit above words — verify they don't collide with the line above at typical
-worksheet line spacing); /api/point latency with two calls. Older open items
-below (eighth session ⚠ drift bug: user says line-level is fixed on device —
-treat that section as resolved unless handheld drift reappears).
+**On-device outcome + two failed follow-up fixes (2026-07-20, later same
+session — main REVERTED to this state, see below):**
+- Word pass WORKS on device (read mid/end-line words near the tip in the
+  user's videos — the first-word bug is gone). Handheld videos also
+  re-confirmed the eighth-session drift bug; pen pointing fails by design
+  (prompts are finger-only; user says finger-only is fine).
+- REMAINING accuracy gap (dense TP worksheet, stand, finger): pass-1 LINE
+  slips ±1 on tight line pitch when pointing mid/end-line
+  ("installation"→"supply", "single-phase"→"transmission") — the model
+  can't trace from a mid-line fingertip to a single left-edge chip across
+  half a page of dense tilted print. Word x-position within the (wrong)
+  line was right both times.
+- **Fix attempt A (b978be6, merged as PR #3): tinted line bands + chips at
+  BOTH ends.** FAILED on device — bands/chips were composited onto the LIVE
+  shot; the canvas doesn't know where the hand is, so the tint striped the
+  fingers and the new right-edge chips (hand enters bottom-right) stamped
+  opaque circles onto the hand → model: found:false ("doesn't even track my
+  finger"). Left-only chips had never collided with the hand.
+- **Fix attempt B (842936f, merged as PR #4): two-photo set-of-marks** —
+  marks on the hand-free SCAN frame, live shot sent clean, prompts find the
+  fingertip in photo 1 and answer the band at the same spot in photo 2.
+  ALSO FAILED on device (user-confirmed): still no finger found. Cause
+  unproven — /api/point has NO logging of the raw model answer, so
+  found:false vs JSON-parse failure vs cross-image confusion is
+  indistinguishable. ADD A TEMPORARY RAW-ANSWER LOG LINE BEFORE THE NEXT
+  ATTEMPT (Vercel function logs).
+- **main was REVERTED to the PR #2 state** (user decision): revert commits
+  0648409 (undoes PR #4) + 84e3266 (undoes PR #3); tree verified
+  byte-identical to 961e302. ⚠ git quirk: re-merging the feature branch
+  will NOT bring A/B back (already in main's history) — any next attempt
+  lands as NEW commits. The feature branch still holds A/B + the full
+  ninth-session PROGRESS notes.
+
+**NEXT (in order):**
+1. Any new pointing attempt starts with observability: log the model's raw
+   text in /api/point (temporary, server-side only).
+2. Candidate next approach — HYBRID, each half already proven on device:
+   legacy `locatePointer` coordinate call on the CLEAN shot for a coarse
+   fingertip region (it always FOUND the finger; error was only ±2–3 lines),
+   then crop the marked SCAN frame to that region (±3 lines) and classify
+   bands/chips on the crop — few bands, big chips, local decision, nothing
+   ever painted on the hand.
+3. Still open: handheld drift (re-OCR-per-point), two-pass latency (crop
+   pass 2), confidence floor so OCR-garbage handwriting isn't selectable.
+Older open items below (eighth session ⚠ drift bug section: line-level fixed
+on the stand; drift still real handheld).
 
 ## RESUME FROM HERE (2026-07-19, eighth session — set-of-marks pointing branch)
 

@@ -25,7 +25,7 @@ import { buildSentences, buildParagraphs, blockToSentenceMap, localWordAt } from
 import { fastParseCommand } from "../lib/voice-commands";
 import { syllablesOf, coachingLines } from "../lib/syllables";
 import { similarity, saidWordMatches, bestWordMatch } from "../lib/text-match";
-import { buildLineMarks, buildWordMarks } from "../lib/marks";
+import { buildLineMarks, buildWordMarks, wordsNearPoint } from "../lib/marks";
 
 const box = (l: number, t: number, r: number, b: number): [number, number][] => [
   [l, t],
@@ -242,6 +242,24 @@ const box = (l: number, t: number, r: number, b: number): [number, number][] => 
   assert.deepEqual(wordMarks.map((m) => m.n), [1, 2, 3]); // chips numbered contiguously
   assert.deepEqual(wordMarks.map((m) => m.unitIndex), [0, 2, 3]); // original indices kept
   assert.deepEqual(buildWordMarks([]), []);
+}
+
+// ── wordsNearPoint: WORD-scope local candidates from a coarse fingertip ──────
+{
+  // 3×3 word grid: rows at y 0..20, 30..50, 60..80; cols at x 0..40, 50..90, 100..140.
+  const grid: [number, number][][] = [];
+  for (let row = 0; row < 3; row++)
+    for (let col = 0; col < 3; col++)
+      grid.push(box(col * 50, row * 30, col * 50 + 40, row * 30 + 20));
+  const frame = { width: 200, height: 100 };
+  // Indices: row-major, so middle column = 1 (top), 4 (mid), 7 (bottom).
+
+  // Tip in the middle column, low in the middle row: keeps that column only
+  // (side columns fall outside the 0.14·width horizontal band), nearest first.
+  assert.deepEqual(wordsNearPoint(grid, { x: 70, y: 45 }, frame), [4, 1, 7]);
+  // Occlusion prior: tip between rows 1 and 2 → the word ABOVE outranks below.
+  assert.equal(wordsNearPoint(grid, { x: 70, y: 25 }, frame)[0], 1);
+  assert.deepEqual(wordsNearPoint([], { x: 0, y: 0 }, frame), []);
 }
 
 // ── computeStats: quiz_result aggregation ────────────────────────────────────

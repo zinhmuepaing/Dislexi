@@ -13,13 +13,15 @@
  * Compliance unchanged (amended §7 rule 3 #2): the model picks WHERE (a mark
  * number / a word location); the text spoken is always the OCR text VERBATIM.
  *
- * WORD scope gets the same treatment (two-pass): once the line is picked,
- * buildWordMarks numbers that line's word units and the model answers "which
- * chip?" again — never "read the word", because the fingertip occludes its
- * target and the model would name a legible neighbor instead.
+ * WORD scope (stand rig) skips the full-page line pass: a coarse fingertip
+ * from locatePointer (always finds the finger, ±2–3 lines imprecise) narrows
+ * to the few words around the tip (wordsNearPoint); buildWordMarks numbers
+ * ONLY those and the model answers "which chip?" on a local view. Still
+ * classification, never "read the word" — the fingertip occludes its target,
+ * so the model would name a legible neighbor instead.
  *
- * buildLineMarks/buildWordMarks are pure (covered by scripts/logic-tests.mts);
- * drawMarks is canvas/DOM and client-only.
+ * buildLineMarks/buildWordMarks/wordsNearPoint are pure (covered by
+ * scripts/logic-tests.mts); drawMarks is canvas/DOM and client-only.
  */
 
 import type { OcrBox } from "@/components/KaraokeHighlight";
@@ -73,6 +75,63 @@ export function buildWordMarks(
     marks.push({ n: marks.length + 1, text: w.text, box: w.box, unitIndex });
   }
   return marks;
+}
+
+export interface NearPointOpts {
+  /** Vertical half-window in line-heights (default 3 — covers locatePointer's ±2–3 line error). */
+  vBandLines?: number;
+  /** Horizontal half-window as a fraction of frame width (default 0.14). */
+  hBandFrac?: number;
+  /** Cap on candidates returned (default 10 — keeps the local classify view legible). */
+  max?: number;
+}
+
+/**
+ * Rank word boxes near a coarse fingertip for the WORD-scope local classify
+ * pass (stand rig). `point` and the boxes share one pixel space (§ CLAUDE.md
+ * rule 1). Returns indices into `boxes`, nearest first, capped: only words
+ * within a vertical band (locatePointer is imprecise vertically) and a
+ * horizontal band (the pointed x is reliable) around the tip. Score carries
+ * the occlusion prior — the finger covers its target from below, so words
+ * at/above the tip rank ahead of those below it. If nothing passes the bands
+ * (finger in a margin), falls back to the globally nearest few so the caller
+ * still has candidates. Pure; covered by scripts/logic-tests.mts.
+ */
+export function wordsNearPoint(
+  boxes: [number, number][][],
+  point: { x: number; y: number },
+  frame: { width: number; height: number },
+  opts: NearPointOpts = {},
+): number[] {
+  if (boxes.length === 0) return [];
+  const vBandLines = opts.vBandLines ?? 3;
+  const hBandFrac = opts.hBandFrac ?? 0.14;
+  const max = opts.max ?? 10;
+
+  const rects = boxes.map((box) => {
+    const xs = box.map(([x]) => x);
+    const ys = box.map(([, y]) => y);
+    const t = Math.min(...ys);
+    const b = Math.max(...ys);
+    return { l: Math.min(...xs), r: Math.max(...xs), t, b, h: b - t };
+  });
+
+  const heights = rects.map((rc) => rc.h).filter((h) => h > 0).sort((a, b) => a - b);
+  const lineHeight = heights.length ? heights[Math.floor(heights.length / 2)] : frame.height * 0.03;
+  const vBand = vBandLines * lineHeight;
+  const hBand = hBandFrac * frame.width;
+
+  const scored = rects.map((rc, i) => {
+    const dx = Math.max(rc.l - point.x, point.x - rc.r, 0);
+    const dy = Math.max(rc.t - point.y, point.y - rc.b, 0);
+    const belowBias = rc.t > point.y ? lineHeight : 0; // occlusion: prefer at/above the tip
+    return { i, dx, dy, score: dx * dx + (dy + belowBias) * (dy + belowBias) };
+  });
+
+  const gated = scored.filter((s) => s.dx <= hBand && s.dy <= vBand);
+  const pool = gated.length ? gated : scored;
+  pool.sort((a, b) => a.score - b.score);
+  return pool.slice(0, max).map((s) => s.i);
 }
 
 /**

@@ -348,6 +348,7 @@ export async function locatePointer(imageBase64: string): Promise<PointerLocatio
     .filter((b): b is Anthropic.TextBlock => b.type === "text")
     .map((b) => b.text)
     .join("");
+  console.log("[point] locatePointer raw:", raw); // TEMPORARY: on-device pointing debug
   try {
     const start = raw.indexOf("{");
     const end = raw.lastIndexOf("}");
@@ -422,6 +423,7 @@ export async function locatePointedMark(
     .filter((b): b is Anthropic.TextBlock => b.type === "text")
     .map((b) => b.text)
     .join("");
+  console.log("[point] locatePointedMark raw:", raw); // TEMPORARY: on-device pointing debug
   try {
     const start = raw.indexOf("{");
     const end = raw.lastIndexOf("}");
@@ -487,6 +489,7 @@ export async function locatePointedWordMark(
     .filter((b): b is Anthropic.TextBlock => b.type === "text")
     .map((b) => b.text)
     .join("");
+  console.log("[point] locatePointedWordMark raw:", raw); // TEMPORARY: on-device pointing debug
   try {
     const start = raw.indexOf("{");
     const end = raw.lastIndexOf("}");

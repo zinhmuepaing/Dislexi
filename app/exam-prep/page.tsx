@@ -12,16 +12,19 @@
  * replaces coordinate regression, which selected lines below the finger):
  * enter → mic on (endless, silence-chunked; §7 rule 8 transcripts only) →
  * camera ready → AUTO scan (OCR, preview stays live) → say "read this" (or
- * tap Read this) → capture a frame → composite numbered chips on the OCR
- * lines (lib/marks.ts) → POST /api/point {marks} (vision model CLASSIFIES
- * the marked line) → word scope only: SECOND pass with chips above each word
- * of the picked line → POST /api/point {granularity:"word"} (model classifies
- * the word chip; pass-1 word guess is the fallback) → resolve unit per scope →
- * read it verbatim with karaoke highlight → log 'read'/'reread' → … →
+ * tap Read this) → capture a frame → resolve the pointed unit per scope:
+ *   • SENTENCE/PARAGRAPH — chips at each OCR line, POST /api/point {marks}
+ *     (model names the LINE; those units span lines so a ±1 slip is absorbed).
+ *   • WORD (stand rig) — coarse fingertip via POST /api/point {} (coordinate
+ *     mode) → wordsNearPoint narrows to the few words at the tip → chips ABOVE
+ *     only those → POST /api/point {granularity:"word"} (model names the chip).
+ *     No full-page line pass, so the dense-sheet ±1-line slip is gone.
+ * → read it verbatim with karaoke highlight → log 'read'/'reread' → … →
  * end session → stats.
  *
- * Revert paths preserved: /api/point coordinate mode (call without marks) and
- * the MediaPipe implementation in lib/hand-tracker.ts (dwell loop not started).
+ * Revert paths preserved: /api/point coordinate mode is now the WORD stage-1
+ * call; the MediaPipe implementation in lib/hand-tracker.ts (dwell loop not
+ * started) remains.
  */
 
 import { useEffect, useRef, useState } from "react";
@@ -31,8 +34,7 @@ import { ChevronLeft, Mic, MicOff, ScanText, RotateCw, Square } from "lucide-rea
 import { CameraStage, CameraStageHandle, CapturedFrame } from "@/components/CameraStage";
 import { KaraokeHighlight, OcrBox, rectForRange } from "@/components/KaraokeHighlight";
 import { Point } from "@/lib/hand-tracker";
-import { buildLineMarks, buildWordMarks, drawMarks, LineMark } from "@/lib/marks";
-import { bestWordMatch } from "@/lib/text-match";
+import { buildLineMarks, buildWordMarks, drawMarks, wordsNearPoint } from "@/lib/marks";
 import { speak, stopSpeaking, announce, primeSpeech } from "@/lib/speech";
 import { installAudioUnlock } from "@/lib/audio";
 import { SessionLogger } from "@/lib/event-queue";
@@ -260,10 +262,9 @@ export default function ExamPrepPage() {
   }
 
   /**
-   * Capture a frame, composite numbered chips on the OCR lines, and ask the
-   * vision model WHICH mark the finger points at (set-of-marks — replaces
-   * coordinate regression, which selected lines below the finger). Word scope
-   * then runs a second, word-granularity marks pass inside resolveUnit.
+   * Capture one frame and resolve the pointed unit per scope (see file header):
+   * SENTENCE/PARAGRAPH use the full-page line pass; WORD uses coarse-find +
+   * local classify. Spoken text is always the OCR text VERBATIM (§7 rule 3).
    */
   async function readViaPointer(scopeOverride?: ReadScope) {
     const current = scanRef.current;
@@ -283,28 +284,12 @@ export default function ExamPrepPage() {
         setStatus("Camera not ready — try again.");
         return;
       }
-      const lineMarks = buildLineMarks(current.blocks);
-      const marked = await drawMarks(shot.base64, lineMarks, {
-        width: current.frame.width,
-        height: current.frame.height,
-      });
-      const res = await fetch("/api/point", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          imageBase64: marked,
-          marks: lineMarks.map(({ n, text }) => ({ n, text })),
-        }),
-      });
-      const data = (await res.json()) as { found?: boolean; mark?: number; word?: string | null };
-      const lineMark = data.found ? lineMarks.find((m) => m.n === data.mark) : undefined;
-      if (!lineMark) {
-        setStatus("I couldn’t see your finger — point clearly at a word and try again.");
-        return;
-      }
-      const unit = await resolveUnit(shot.base64, lineMark, data.word ?? null);
+      const unit =
+        scopeRef.current === "word"
+          ? await pointWord(shot.base64, current)
+          : await pointLine(shot.base64, current);
       if (!unit) {
-        setStatus("I couldn’t tell which word — point right under it and try again.");
+        setStatus("I couldn’t see your finger — point clearly at a word and try again.");
         return;
       }
       await readUnit(unit);
@@ -316,58 +301,75 @@ export default function ExamPrepPage() {
     }
   }
 
-  /**
-   * Marked line → the unit to read, per the active scope. Word scope runs a
-   * SECOND set-of-marks pass: chips above each word of the picked line, model
-   * answers "which chip?" — classification, like the line pass, because the
-   * fingertip occludes its target word and asking the model to READ it made
-   * it name a legible neighbor (usually the line's first word). The pass-1
-   * word guess survives only as the fallback when the word pass fails.
-   */
-  async function resolveUnit(
-    shotBase64: string,
-    lineMark: LineMark,
-    word: string | null,
-  ): Promise<Sentence | null> {
-    const { units } = unitsRef.current;
-    if (scopeRef.current !== "word") {
-      return units.find((u) => u.blockIndices.includes(lineMark.blockIndex)) ?? null;
-    }
-    const inLine = units.filter((u) => u.blockIndices[0] === lineMark.blockIndex);
-    if (inLine.length === 0) return null;
-    if (inLine.length === 1) return inLine[0];
+  /** SENTENCE/PARAGRAPH: chips at each OCR line → model names the line → its unit. */
+  async function pointLine(shotBase64: string, current: Scan): Promise<Sentence | null> {
+    const lineMarks = buildLineMarks(current.blocks);
+    const marked = await drawMarks(shotBase64, lineMarks, {
+      width: current.frame.width,
+      height: current.frame.height,
+    });
+    const res = await fetch("/api/point", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        imageBase64: marked,
+        marks: lineMarks.map(({ n, text }) => ({ n, text })),
+      }),
+    });
+    const data = (await res.json()) as { found?: boolean; mark?: number };
+    const lineMark = data.found ? lineMarks.find((m) => m.n === data.mark) : undefined;
+    if (!lineMark) return null;
+    return unitsRef.current.units.find((u) => u.blockIndices.includes(lineMark.blockIndex)) ?? null;
+  }
 
-    const frame = scanRef.current?.frame;
-    if (frame) {
-      try {
-        setStatus("Finding the word…");
-        const wordMarks = buildWordMarks(
-          inLine.map((u) => ({ text: u.text, box: u.blocks[0].box })),
-        );
-        const marked = await drawMarks(
-          shotBase64,
-          wordMarks,
-          { width: frame.width, height: frame.height },
-          "above",
-        );
-        const res = await fetch("/api/point", {
-          method: "POST",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({
-            imageBase64: marked,
-            marks: wordMarks.map(({ n, text }) => ({ n, text })),
-            granularity: "word",
-          }),
-        });
-        const data = (await res.json()) as { found?: boolean; mark?: number };
-        const wordMark = data.found ? wordMarks.find((m) => m.n === data.mark) : undefined;
-        if (wordMark) return inLine[wordMark.unitIndex];
-      } catch (err) {
-        console.error("word-mark pass failed:", err);
-      }
-    }
-    const match = bestWordMatch(inLine.map((u) => u.text), word);
-    return match ? inLine[match.index] : null;
+  /**
+   * WORD (stand rig): coarse fingertip from locatePointer on the CLEAN shot
+   * (always finds the finger; ±2–3 lines imprecise) → wordsNearPoint narrows
+   * to the few words at the tip → chips ABOVE only those → model classifies
+   * which chip. Nothing is ever drawn on the hand, chips sit by the fingertip
+   * (no full-page trace, no ±1-line slip), and it stays one image throughout.
+   * Falls back to the nearest candidate if the classify pass comes back empty.
+   */
+  async function pointWord(shotBase64: string, current: Scan): Promise<Sentence | null> {
+    const { units } = unitsRef.current;
+    if (units.length === 0) return null;
+
+    // Stage 1 — coarse find (coordinate mode: no marks).
+    const coarseRes = await fetch("/api/point", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ imageBase64: shotBase64 }),
+    });
+    const coarse = (await coarseRes.json()) as { found?: boolean; x?: number; y?: number };
+    if (!coarse.found || typeof coarse.x !== "number" || typeof coarse.y !== "number") return null;
+    const point = { x: coarse.x * current.frame.width, y: coarse.y * current.frame.height };
+
+    // Stage 2 — chip only the words at the fingertip, classify locally.
+    const near = wordsNearPoint(units.map((u) => u.blocks[0].box), point, current.frame);
+    if (near.length === 0) return null;
+    if (near.length === 1) return units[near[0]];
+
+    setStatus("Finding the word…");
+    const candidates = near.map((i) => units[i]);
+    const wordMarks = buildWordMarks(candidates.map((u) => ({ text: u.text, box: u.blocks[0].box })));
+    const marked = await drawMarks(
+      shotBase64,
+      wordMarks,
+      { width: current.frame.width, height: current.frame.height },
+      "above",
+    );
+    const res = await fetch("/api/point", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        imageBase64: marked,
+        marks: wordMarks.map(({ n, text }) => ({ n, text })),
+        granularity: "word",
+      }),
+    });
+    const data = (await res.json()) as { found?: boolean; mark?: number };
+    const wordMark = data.found ? wordMarks.find((m) => m.n === data.mark) : undefined;
+    return wordMark ? candidates[wordMark.unitIndex] : candidates[0];
   }
 
   async function handleUtterance(text: string) {
