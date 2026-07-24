@@ -1,5 +1,58 @@
 # PROGRESS.md — Dislexi build session log
 
+## RESUME FROM HERE (2026-07-24, thirteenth session — pointing settled on device)
+
+Branch `feature/word-pointing-occlusion-fix` (not merged, no PR — user opens it).
+
+**Device results that drove this session:**
+- Exam-Prep word level now **70–80%** after two fixes: (1) REMOVED the "shift
+  up one line" occlusion correction — it assumed the fingernail rests below its
+  word, so it broke every case where the student rests a finger ON the word;
+  (2) line chips now drawn at BOTH ends of each line — they were left-margin
+  only, exactly where the hand rests when it enters from the left, so chips
+  landed on the hand and the model lost the finger.
+- **USER'S KEY DISCOVERY: resting the hand ON the word beats pointing at it
+  from below.** Touching removes the occlusion offset entirely — the fingertip
+  position IS the word position, nothing to estimate. Worth teaching as the
+  gesture (UI copy still says "point at"). This is why the correction had to
+  go: it corrects for a gesture we no longer want.
+- Autopsy still showed the "traces back to the beginning of the sentence" bug →
+  now fixed (below).
+
+**Natural experiment (device):** both modes share byte-identical line-pass code,
+so the ONLY variable was the word step. Exam-Prep (chips, "which chip?") 70–80%;
+Autopsy (fuzzy-match the word the model READ) collapsed to the line's first
+word. Offline reproduced it (first word in 4/9: removable, Electrical, same,
+TEMASEK). Conclusion: classification beats reading a word the hand is covering.
+
+**This session's change:** Autopsy `locateWord` now runs the SAME two-pass flow
+(line pass → zoomed chip word pass). `bestWordMatch` dropped there; no fallback
+to it on failure (a wrong word gets coached syllable by syllable, so a retry
+beats a confident wrong answer). Costs one extra vision call in the stuck-word
+flow. Gates green.
+
+**⚠ DEBT — the pointing flow is now DUPLICATED** in exam-prep (`linePass`/
+`wordPass`) and autopsy (`locateWord`). This duplication is exactly why Autopsy
+missed the ninth-session word fix and stayed broken for days. Extract to lib/
+once tuning settles, or it WILL drift a third time.
+
+**Offline test harness lessons (harness itself deleted):**
+- Photos must be PAIRED: `clean_<word>.jpg` + `<word>.jpg`, phone/paper
+  untouched between the two. Properly paired shots aligned to Δ≈2–35px;
+  unpaired ones were off by up to (95,−158) and made every result meaningless.
+- A SHADOWED clean scan wrecks OCR ("easy"→"pay", a line reading just "1").
+  OCR is ground truth, so a bad auto-scan breaks everything downstream.
+- The model is NON-DETERMINISTIC — same photo, different line picks across
+  runs. No configuration reaches 100%; plan for a correction path.
+- Frame-differencing to locate the hand was tried and REJECTED: it needs tight
+  scan/shot alignment the real usage can't guarantee (scan is captured once on
+  entry, reads happen minutes later).
+
+**NEXT:** device-test Autopsy's new word pass; teach the hand-ON-the-word
+gesture in the UI copy; consider the residual-error correction path ("left"/
+"right" to step a word, or confirm-with-user) rather than chasing the last
+20–30%; then extract the shared pointing flow to lib/.
+
 ## RESUME FROM HERE (2026-07-23, twelfth session — OFFLINE pointing eval, n=4)
 
 Built a throwaway OFFLINE test harness (scripts/test-point.mts,
