@@ -16,10 +16,12 @@
  * /api/point {marks} → model names the line). Then per scope:
  *   • SENTENCE/PARAGRAPH — the line's unit (these span lines, so a ±1 slip is
  *     absorbed).
- *   • WORD — correctForOcclusion (the fingernail sits a line low → retarget to
- *     the closely-spaced line above) → ZOOMED word pass (drawWordMarksZoom,
- *     chips above each word with the finger in frame) → POST /api/point
- *     {granularity:"word"} (model names the word straight above the fingernail).
+ *   • WORD — ZOOMED word pass on that same line (drawWordMarksZoom, chips above
+ *     each word with the finger in frame) → POST /api/point
+ *     {granularity:"word"} (model names the word the fingertip is on).
+ *     NOTE: a deterministic "shift up one line" occlusion correction was tried
+ *     here and REMOVED — it assumed the fingernail rests below its word, so it
+ *     broke every case where the student rests a finger ON the word.
  * → read it verbatim with karaoke highlight → log 'read'/'reread' → … →
  * end session → stats.
  *
@@ -34,7 +36,7 @@ import { ChevronLeft, Mic, MicOff, ScanText, RotateCw, Square } from "lucide-rea
 import { CameraStage, CameraStageHandle, CapturedFrame } from "@/components/CameraStage";
 import { KaraokeHighlight, OcrBox, rectForRange } from "@/components/KaraokeHighlight";
 import { Point } from "@/lib/hand-tracker";
-import { buildLineMarks, buildWordMarks, drawMarks, drawWordMarksZoom, correctForOcclusion } from "@/lib/marks";
+import { buildLineMarks, buildWordMarks, drawMarks, drawWordMarksZoom } from "@/lib/marks";
 import { speak, stopSpeaking, announce, primeSpeech } from "@/lib/speech";
 import { installAudioUnlock } from "@/lib/audio";
 import { SessionLogger } from "@/lib/event-queue";
@@ -291,10 +293,7 @@ export default function ExamPrepPage() {
       }
       let unit: Sentence | null;
       if (scopeRef.current === "word") {
-        // The fingernail rests a line below its word → retarget up, then read
-        // across the corrected line with a zoomed word pass.
-        const corrected = correctForOcclusion(current.blocks, blockIndex);
-        unit = await wordPass(shot.base64, current, corrected);
+        unit = await wordPass(shot.base64, current, blockIndex);
       } else {
         unit = unitsRef.current.units.find((u) => u.blockIndices.includes(blockIndex)) ?? null;
       }

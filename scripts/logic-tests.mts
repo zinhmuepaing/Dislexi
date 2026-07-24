@@ -25,7 +25,7 @@ import { buildSentences, buildParagraphs, blockToSentenceMap, localWordAt } from
 import { fastParseCommand } from "../lib/voice-commands";
 import { syllablesOf, coachingLines } from "../lib/syllables";
 import { similarity, saidWordMatches, bestWordMatch } from "../lib/text-match";
-import { buildLineMarks, buildWordMarks, correctForOcclusion } from "../lib/marks";
+import { buildLineMarks, buildWordMarks } from "../lib/marks";
 
 const box = (l: number, t: number, r: number, b: number): [number, number][] => [
   [l, t],
@@ -244,25 +244,6 @@ const box = (l: number, t: number, r: number, b: number): [number, number][] => 
   assert.deepEqual(buildWordMarks([]), []);
 }
 
-// ── correctForOcclusion: retarget up to a closely-spaced line, else keep ─────
-{
-  const lines = [
-    { text: "Header", box: box(50, 0, 250, 20) }, // 0: isolated heading
-    { text: "line one", box: box(50, 100, 250, 120) }, // 1: paragraph line A
-    { text: "line two", box: box(50, 125, 250, 145) }, // 2: line B, tight below A (gap 5)
-    { text: "far", box: box(50, 300, 100, 320) }, // 3: far isolated line
-  ];
-  assert.equal(correctForOcclusion(lines, 2), 1); // B picked → shift up to A (gap 5 < ~22)
-  assert.equal(correctForOcclusion(lines, 1), 1); // A picked → big gap above (80) → keep
-  assert.equal(correctForOcclusion(lines, 0), 0); // heading → nothing above → keep
-  assert.equal(correctForOcclusion(lines, 3), 3); // far line → 155px gap above → keep
-  // A line above that does NOT overlap horizontally must not trigger a shift.
-  const offset = [
-    { text: "left", box: box(0, 100, 40, 120) }, // 0: above but x 0..40
-    { text: "right", box: box(200, 130, 300, 150) }, // 1: no x-overlap with line 0
-  ];
-  assert.equal(correctForOcclusion(offset, 1), 1);
-}
 
 // ── computeStats: quiz_result aggregation ────────────────────────────────────
 {

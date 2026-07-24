@@ -79,54 +79,21 @@ export function buildWordMarks(
   return marks;
 }
 
-export interface OcclusionOpts {
-  /** Retarget up only when the line above is within this × the picked line's height. */
-  gapFactor?: number;
-  /** Min horizontal overlap with the picked line, as a fraction of the narrower box. */
-  minOverlap?: number;
-}
-
 /**
- * OCCLUSION CORRECTION for the LINE pass. The child rests the fingernail just
- * BELOW the word they mean, so the line pass reliably lands one line too low.
- * If a text line sits CLOSELY above the picked line (tight spacing ⇒ the tip is
- * hiding it) and overlaps it horizontally, return that line's index; isolated
- * lines with a large gap above (headings) are left alone. Pure; covered by
- * scripts/logic-tests.mts.
+ * REMOVED: a deterministic "shift up one line" occlusion correction lived here.
+ * It assumed the fingernail always rests just BELOW the word it means, which
+ * held for one photo set and failed everywhere else — it broke already-correct
+ * line picks (measured 3/5 → 2/5) and destroyed every case where the student
+ * rests a finger ON the word. Kept in git history if the premise ever holds.
  */
-export function correctForOcclusion(
-  blocks: { text: string; box: [number, number][] }[],
-  blockIndex: number,
-  opts: OcclusionOpts = {},
-): number {
-  const gapFactor = opts.gapFactor ?? 1.1;
-  const minOverlap = opts.minOverlap ?? 0.3;
-  const rct = (box: [number, number][]) => {
-    const xs = box.map(([x]) => x);
-    const ys = box.map(([, y]) => y);
-    return { l: Math.min(...xs), r: Math.max(...xs), t: Math.min(...ys), b: Math.max(...ys), h: Math.max(...ys) - Math.min(...ys) };
-  };
-  const target = blocks[blockIndex];
-  if (!target) return blockIndex;
-  const L = rct(target.box);
-  let above = -1;
-  let aboveBottom = -Infinity;
-  for (let i = 0; i < blocks.length; i++) {
-    if (i === blockIndex || blocks[i].text.trim() === "") continue;
-    const R = rct(blocks[i].box);
-    if (R.b >= L.t) continue; // must sit above the picked line
-    const overlap = Math.min(L.r, R.r) - Math.max(L.l, R.l);
-    if (overlap < minOverlap * Math.min(L.r - L.l, R.r - R.l)) continue; // needs x-overlap
-    if (R.b > aboveBottom) { aboveBottom = R.b; above = i; } // closest line above
-  }
-  return above >= 0 && L.t - aboveBottom < gapFactor * L.h ? above : blockIndex;
-}
 
 /**
- * Chip placement relative to its box: "left" for line marks (left edge of the
- * line), "above" for word marks — the finger approaches from below on the
- * desk rig, so a chip above the word stays visible while the word itself is
- * covered by the fingertip.
+ * Chip placement relative to its box: "left" for line marks — drawn at BOTH
+ * ends of the line (same number). The hand rests over one margin (it enters
+ * from the left or the right), and a chip composited onto the hand made the
+ * model lose the finger entirely; two chips mean one is always clear of it.
+ * "above" for word marks — the finger approaches from below on the desk rig,
+ * so a chip above the word stays visible while the word itself is covered.
  */
 export type MarkPlacement = "left" | "above";
 
@@ -159,28 +126,7 @@ export async function drawMarks(
   const sx = canvas.width / Math.max(1, boxSpace.width);
   const sy = canvas.height / Math.max(1, boxSpace.height);
 
-  for (const mark of marks) {
-    const ys = mark.box.map(([, y]) => y);
-    const xs = mark.box.map(([x]) => x);
-    const top = Math.min(...ys) * sy;
-    const bottom = Math.max(...ys) * sy;
-    const left = Math.min(...xs) * sx;
-    const right = Math.max(...xs) * sx;
-    let cx: number;
-    let cy: number;
-    let r: number;
-    if (placement === "above") {
-      // Word chip: smaller, centered above the word; clamped inside the frame.
-      r = Math.min(18, Math.max(9, (bottom - top) * 0.55));
-      cx = Math.min(canvas.width - r - 2, Math.max(r + 2, (left + right) / 2));
-      cy = Math.max(r + 2, top - r - 4);
-    } else {
-      // Line chip sits just left of the line; clamped inside the frame.
-      r = Math.min(26, Math.max(12, (bottom - top) * 0.75));
-      cy = (top + bottom) / 2;
-      cx = Math.max(r + 2, left - r - 6);
-    }
-
+  const chip = (cx: number, cy: number, r: number, n: number) => {
     ctx.beginPath();
     ctx.arc(cx, cy, r, 0, Math.PI * 2);
     ctx.fillStyle = "#ffffff";
@@ -192,7 +138,29 @@ export async function drawMarks(
     ctx.font = `bold ${Math.round(r * 1.1)}px system-ui, sans-serif`;
     ctx.textAlign = "center";
     ctx.textBaseline = "middle";
-    ctx.fillText(String(mark.n), cx, cy + r * 0.05);
+    ctx.fillText(String(n), cx, cy + r * 0.05);
+  };
+
+  for (const mark of marks) {
+    const ys = mark.box.map(([, y]) => y);
+    const xs = mark.box.map(([x]) => x);
+    const top = Math.min(...ys) * sy;
+    const bottom = Math.max(...ys) * sy;
+    const left = Math.min(...xs) * sx;
+    const right = Math.max(...xs) * sx;
+    if (placement === "above") {
+      // Word chip: smaller, centered above the word; clamped inside the frame.
+      const r = Math.min(18, Math.max(9, (bottom - top) * 0.55));
+      const cx = Math.min(canvas.width - r - 2, Math.max(r + 2, (left + right) / 2));
+      chip(cx, Math.max(r + 2, top - r - 4), r, mark.n);
+    } else {
+      // Line chips: the SAME number at both ends, so the margin the hand is
+      // resting on never hides the line's only chip.
+      const r = Math.min(26, Math.max(12, (bottom - top) * 0.75));
+      const cy = (top + bottom) / 2;
+      chip(Math.max(r + 2, left - r - 6), cy, r, mark.n);
+      chip(Math.min(canvas.width - r - 2, right + r + 6), cy, r, mark.n);
+    }
   }
 
   return canvas.toDataURL("image/jpeg", 0.85);

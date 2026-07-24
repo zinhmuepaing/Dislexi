@@ -425,6 +425,7 @@ export async function locatePointedMark(
   try {
     const start = raw.indexOf("{");
     const end = raw.lastIndexOf("}");
+    if (process.env.POINT_DEBUG) console.log("[line raw]", raw);
     const parsed = JSON.parse(raw.slice(start, end + 1)) as {
       found?: boolean;
       mark?: unknown;
@@ -492,6 +493,7 @@ export async function locatePointedWordMark(
   try {
     const start = raw.indexOf("{");
     const end = raw.lastIndexOf("}");
+    if (process.env.POINT_DEBUG) console.log("[word raw]", raw);
     const parsed = JSON.parse(raw.slice(start, end + 1)) as {
       found?: boolean;
       mark?: unknown;
