@@ -9,12 +9,14 @@
  * content). "sound it out" plays the static phoneme bank sweep (§7 rule 4).
  * Practiced words feed the end-of-session quiz (R7).
  *
- * Pointing uses set-of-marks (/api/point {marks}, branch feature/
- * set-of-marks-pointing): numbered chips are composited on the OCR lines and
- * the vision model names the marked line + the pointed word (classification,
- * not coordinate regression — which selected lines below the finger). The
- * OCR word entry resolved there is what we coach/quiz. Revert paths: the
- * /api/point coordinate mode and MediaPipe in lib/hand-tracker.ts.
+ * Pointing uses set-of-marks (/api/point {marks}) in TWO passes, identical to
+ * Exam-Prep: numbered chips at both ends of each OCR line → the model names
+ * the LINE; then chips above each word of that line on a zoomed crop → the
+ * model names the WORD. Classification throughout, never "read the word" (the
+ * hand covers its target). The OCR word entry resolved there is what we
+ * coach/quiz. NOTE: this flow is duplicated from app/exam-prep/page.tsx —
+ * extract to lib/ when tuning settles, or the two will drift again.
+ * Revert paths: /api/point coordinate mode and MediaPipe in lib/hand-tracker.ts.
  */
 
 import { useEffect, useRef, useState } from "react";
@@ -25,12 +27,12 @@ import { GraphemeSweep } from "@/components/GraphemeSweep";
 import { OcrBox, subBoxFor } from "@/components/KaraokeHighlight";
 import { chunksFor, chunkPattern, normalizeWord, GraphemeChunkDef } from "@/lib/graphemes";
 import { Point } from "@/lib/hand-tracker";
-import { buildLineMarks, drawMarks } from "@/lib/marks";
+import { buildLineMarks, buildWordMarks, drawMarks, drawWordMarksZoom } from "@/lib/marks";
 import { speak, speakSteps, stopSpeaking, announce, primeSpeech } from "@/lib/speech";
 import { installAudioUnlock, loadClip, playSequence, playChime, Playback } from "@/lib/audio";
 import { SessionLogger } from "@/lib/event-queue";
 import { coachingLines } from "@/lib/syllables";
-import { saidWordMatches, bestWordMatch } from "@/lib/text-match";
+import { saidWordMatches } from "@/lib/text-match";
 import { resolveVoiceCommand } from "@/lib/voice-commands";
 import { startVoiceListener, VoiceListener } from "@/lib/stt";
 import { LottieBadge } from "@/components/LottieBadge";
@@ -226,9 +228,15 @@ export default function AutopsyPage() {
   }
 
   /**
-   * Capture → set-of-marks: chips on the OCR lines, the model names the
-   * marked line + the word it sees pointed → resolve to the OCR word entry
-   * in that line (fuzzy text match; single-word lines need no word answer).
+   * Capture → LINE pass (chips at both ends of each OCR line, model names the
+   * line) → ZOOMED WORD pass (chips above each word of that line, model names
+   * the word the fingertip is on). Same two-pass flow as Exam-Prep.
+   *
+   * The word step used to fuzzy-match the word the model READ off the image,
+   * which failed systematically: the hand covers its target word, so the model
+   * named the most legible one instead — usually the line's FIRST word, and
+   * that wrong word then got sounded out syllable by syllable. Classification
+   * never needs to read the covered word.
    */
   async function locateWord(): Promise<WordEntry | null> {
     const dims = frameRef.current;
@@ -249,14 +257,33 @@ export default function AutopsyPage() {
         marks: lineMarks.map(({ n, text }) => ({ n, text })),
       }),
     });
-    const data = (await res.json()) as { found?: boolean; mark?: number; word?: string | null };
+    const data = (await res.json()) as { found?: boolean; mark?: number };
     const lineMark = data.found ? lineMarks.find((m) => m.n === data.mark) : undefined;
     if (!lineMark) return null;
     const inLine = wordsRef.current.filter((w) => w.blockIndex === lineMark.blockIndex);
     if (inLine.length === 0) return null;
     if (inLine.length === 1) return inLine[0];
-    const match = bestWordMatch(inLine.map((w) => w.text), data.word ?? null);
-    return match ? inLine[match.index] : null;
+
+    // WORD pass — zoomed crop of the picked line with the fingertip in frame.
+    const wordMarks = buildWordMarks(inLine.map((w) => ({ text: w.text, box: w.box })));
+    const zoomed = await drawWordMarksZoom(shot.base64, wordMarks, {
+      width: dims.width,
+      height: dims.height,
+    });
+    const wres = await fetch("/api/point", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        imageBase64: zoomed,
+        marks: wordMarks.map(({ n, text }) => ({ n, text })),
+        granularity: "word",
+      }),
+    });
+    const wdata = (await wres.json()) as { found?: boolean; mark?: number };
+    const wordMark = wdata.found ? wordMarks.find((m) => m.n === wdata.mark) : undefined;
+    // No fallback to the old read-the-word match: a wrong word here gets
+    // coached syllable by syllable, so a retry beats a confident wrong answer.
+    return wordMark ? inLine[wordMark.unitIndex] : null;
   }
 
   /** Trigger: find the pointed word, then coach (default) or sweep. */
