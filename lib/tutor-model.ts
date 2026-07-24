@@ -348,7 +348,6 @@ export async function locatePointer(imageBase64: string): Promise<PointerLocatio
     .filter((b): b is Anthropic.TextBlock => b.type === "text")
     .map((b) => b.text)
     .join("");
-  console.log("[point] locatePointer raw:", raw); // TEMPORARY: on-device pointing debug
   try {
     const start = raw.indexOf("{");
     const end = raw.lastIndexOf("}");
@@ -423,7 +422,6 @@ export async function locatePointedMark(
     .filter((b): b is Anthropic.TextBlock => b.type === "text")
     .map((b) => b.text)
     .join("");
-  console.log("[point] locatePointedMark raw:", raw); // TEMPORARY: on-device pointing debug
   try {
     const start = raw.indexOf("{");
     const end = raw.lastIndexOf("}");
@@ -463,14 +461,16 @@ export async function locatePointedWordMark(
     model: TUTOR_MODEL,
     max_tokens: 80,
     system:
-      "You see a photo of a worksheet with a child's hand pointing at a word. " +
-      "On ONE text line, each word has a small numbered circular chip directly " +
-      "above it; the same numbers with each chip's word are listed in the message. " +
-      "Decide which chip's word the fingertip is pointing at. The fingertip " +
-      "usually COVERS its target word — pick the chip at or directly above the " +
-      "fingertip, never a neighboring chip just because its word is easier to " +
-      'read. Respond with STRICT JSON only: {"found":true,"mark":3} — or ' +
-      '{"found":false} if no pointing hand is visible.',
+      "You see a photo of a worksheet with a child's hand pointing UP at ONE word " +
+      "on a single line of text. Each word on that line has a small numbered " +
+      "circular chip above it; the numbers and their words are listed in the " +
+      "message. The finger approaches from BELOW and stops just under the word it " +
+      "means, so the target is the word DIRECTLY ABOVE the fingertip — the word " +
+      "VERTICALLY ALIGNED with the tip of the fingernail. Note the fingernail's " +
+      "horizontal position, travel straight UP from it, and pick the chip of the " +
+      "word you land on. Judge by that horizontal alignment only — never pick a " +
+      "word because it is easier to read. Respond with STRICT JSON only: " +
+      '{"found":true,"mark":3} — or {"found":false} if no pointing hand is visible.',
     messages: [
       {
         role: "user",
@@ -489,7 +489,6 @@ export async function locatePointedWordMark(
     .filter((b): b is Anthropic.TextBlock => b.type === "text")
     .map((b) => b.text)
     .join("");
-  console.log("[point] locatePointedWordMark raw:", raw); // TEMPORARY: on-device pointing debug
   try {
     const start = raw.indexOf("{");
     const end = raw.lastIndexOf("}");

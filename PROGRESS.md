@@ -1,5 +1,78 @@
 # PROGRESS.md — Dislexi build session log
 
+## RESUME FROM HERE (2026-07-23, twelfth session — OFFLINE pointing eval, n=4)
+
+Built a throwaway OFFLINE test harness (scripts/test-point.mts,
+test-lineword.mts, test-zoom.mts, measure-align.mts — uncommitted, need
+`npm install @napi-rs/canvas --no-save`) that runs the REAL pipeline (Azure
+OCR + Anthropic locatePointer/locatePointedMark/locatePointedWordMark + a Node
+port of drawMarks) against pairs of photos (worksheet+finger / clean scan) and
+scores against a labelled target word. **This lets us evaluate pointing fixes
+in minutes without an on-device cycle — the single biggest tooling win.**
+(napi canvas needs a registered font — `GlobalFonts.registerFromPath(arialbd)`
+— or chips render numberless; the real app's browser canvas is fine.)
+
+**Test set (4 points on the TP worksheet), results:**
+| target | region | coarse-find (main) | classification-first (line→word) |
+|--------|--------|--------------------|----------------------------------|
+| Engineering | logo, sparse print | ✅ | ✅ |
+| Buildings | header, print | ✗ picked "structure" | ✗ picked "(EBT2012)" (1 line low) |
+| sections | Q3, dense HW | ✗ "services" | ✗ "services" (1 line low) |
+| trunking | Q2, dense HW | ✗ "is" (WRONG QUESTION) | ✗ "cables" (1 line low, right Q) |
+
+Both ~1/4 — only sparse printed text (logo) is reliable. **Key difference:**
+- Coarse-find (locatePointer, shipped in a51e794): errors LARGE + UNPREDICTABLE
+  (Q2 point landed on Q3). It reintroduces coordinate regression — the exact
+  thing set-of-marks was built to avoid. Worst option.
+- Classification-first line pass: errors CONSISTENT — **exactly one line too
+  LOW every time** (occlusion: the fingernail rests just below the word). Right
+  question every time. Predictable ⇒ more fixable.
+
+**Root wall (all approaches):** the finger occludes its target and the nail
+sits ~1 line below it; both coordinate- and classification-based vision
+struggle to "look above the fingertip" on dense/tight lines. Sparse/large text
+is fine.
+
+**Tried + rejected this session:** strengthening the line-pass occlusion prompt
+(force "pick the line ABOVE the tip") — REGRESSED: 2 cases returned no answer,
+trunking still slipped. Blunt prompt tweaks destabilise it; reverted. Zoomed
+crop + big chips for the word pass — did NOT help (still picked wrong).
+
+**BREAKTHROUGH — classification-first WORKS with two fixes (3/4, offline).**
+Recipe validated on the 4 photos:
+1. LINE pass (full-page line chips, locatePointedMark) — original prompt; gets
+   the right question every time.
+2. DETERMINISTIC occlusion correction (pure geometry, NOT a prompt): if a text
+   line sits closely above the picked line (gap < ~1.1× line height, x-overlap
+   > 0.3), retarget UP to it; isolated headings (logo) unchanged. Fixes the
+   systematic "+1 line low" bias. Prototype in scripts/test-lineword.mts.
+3. ZOOMED word pass: crop to the corrected line + the strip below it (finger in
+   frame), BIG numbered chips above each word.
+4. VERTICAL-ALIGNMENT word prompt (locatePointedWordMark, EDITED in
+   lib/tutor-model.ts — a keeper): "go straight UP from the fingernail," not
+   "nearest chip."
+Results: sections ✅, Buildings ✅, Engineering ✅, trunking ✗ ("In" — nail
+literally on the In|trunking boundary, an adjacent-word miss). vs coarse-find
+1/4. The one miss is a genuine finger-on-boundary case, not systematic.
+
+**IMPLEMENTED IN THE APP (2026-07-24)** — replaces coarse-find word scope:
+- `lib/marks.ts`: removed `wordsNearPoint` (dead coarse-find); added pure
+  `correctForOcclusion` (tested) + client `drawWordMarksZoom` (cropped/zoomed
+  word chips).
+- `lib/tutor-model.ts`: `locatePointedWordMark` prompt = vertical-alignment
+  ("straight up from the fingernail"); temporary `[point]` logs removed.
+- `app/exam-prep/page.tsx`: `readViaPointer` → `linePass` (returns block index)
+  then, for WORD, `correctForOcclusion` → `wordPass` (zoomed). Sentence/
+  paragraph unchanged (line's unit). Coordinate `/api/point` mode still exists
+  as a revert path but is no longer called.
+- Throwaway harness scripts deleted. Gates green (logic-tests, eslint, build).
+- STILL NEEDS on-device validation (offline n=4 = 3/4; the 1.1× gap threshold
+  and zoom crop may want tuning; genuine finger-on-boundary cases still miss by
+  a word → keep confirm-and-adjust / sentence-scope as fallbacks).
+- FOLLOW-UP: autopsy `locateWord` still uses the old line-pass + bestWordMatch
+  (no occlusion correction) — port the same fix there if stuck-word pointing
+  needs it.
+
 ## RESUME FROM HERE (2026-07-23, eleventh session — WORD pointing: coarse-find + local classify)
 
 On `main` (pulled to `d4ac9bb`; run `npm install` after pulling — teammate's

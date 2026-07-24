@@ -13,15 +13,17 @@
  * Compliance unchanged (amended §7 rule 3 #2): the model picks WHERE (a mark
  * number / a word location); the text spoken is always the OCR text VERBATIM.
  *
- * WORD scope (stand rig) skips the full-page line pass: a coarse fingertip
- * from locatePointer (always finds the finger, ±2–3 lines imprecise) narrows
- * to the few words around the tip (wordsNearPoint); buildWordMarks numbers
- * ONLY those and the model answers "which chip?" on a local view. Still
- * classification, never "read the word" — the fingertip occludes its target,
- * so the model would name a legible neighbor instead.
+ * WORD scope: full-page LINE pass (buildLineMarks + "which line?") → a
+ * deterministic OCCLUSION correction (correctForOcclusion — the fingernail
+ * rests a line below the word it means, so the pick is reliably one line low;
+ * retarget to a closely-spaced line above) → a ZOOMED word pass
+ * (drawWordMarksZoom crops to that line with the finger below, big chips) →
+ * "which word?". Classification throughout, never "read the word": the
+ * fingertip occludes its target, so the model would name a legible neighbor.
  *
- * buildLineMarks/buildWordMarks/wordsNearPoint are pure (covered by
- * scripts/logic-tests.mts); drawMarks is canvas/DOM and client-only.
+ * buildLineMarks/buildWordMarks/correctForOcclusion are pure (covered by
+ * scripts/logic-tests.mts); drawMarks/drawWordMarksZoom are canvas/DOM and
+ * client-only.
  */
 
 import type { OcrBox } from "@/components/KaraokeHighlight";
@@ -77,61 +79,47 @@ export function buildWordMarks(
   return marks;
 }
 
-export interface NearPointOpts {
-  /** Vertical half-window in line-heights (default 3 — covers locatePointer's ±2–3 line error). */
-  vBandLines?: number;
-  /** Horizontal half-window as a fraction of frame width (default 0.14). */
-  hBandFrac?: number;
-  /** Cap on candidates returned (default 10 — keeps the local classify view legible). */
-  max?: number;
+export interface OcclusionOpts {
+  /** Retarget up only when the line above is within this × the picked line's height. */
+  gapFactor?: number;
+  /** Min horizontal overlap with the picked line, as a fraction of the narrower box. */
+  minOverlap?: number;
 }
 
 /**
- * Rank word boxes near a coarse fingertip for the WORD-scope local classify
- * pass (stand rig). `point` and the boxes share one pixel space (§ CLAUDE.md
- * rule 1). Returns indices into `boxes`, nearest first, capped: only words
- * within a vertical band (locatePointer is imprecise vertically) and a
- * horizontal band (the pointed x is reliable) around the tip. Score carries
- * the occlusion prior — the finger covers its target from below, so words
- * at/above the tip rank ahead of those below it. If nothing passes the bands
- * (finger in a margin), falls back to the globally nearest few so the caller
- * still has candidates. Pure; covered by scripts/logic-tests.mts.
+ * OCCLUSION CORRECTION for the LINE pass. The child rests the fingernail just
+ * BELOW the word they mean, so the line pass reliably lands one line too low.
+ * If a text line sits CLOSELY above the picked line (tight spacing ⇒ the tip is
+ * hiding it) and overlaps it horizontally, return that line's index; isolated
+ * lines with a large gap above (headings) are left alone. Pure; covered by
+ * scripts/logic-tests.mts.
  */
-export function wordsNearPoint(
-  boxes: [number, number][][],
-  point: { x: number; y: number },
-  frame: { width: number; height: number },
-  opts: NearPointOpts = {},
-): number[] {
-  if (boxes.length === 0) return [];
-  const vBandLines = opts.vBandLines ?? 3;
-  const hBandFrac = opts.hBandFrac ?? 0.14;
-  const max = opts.max ?? 10;
-
-  const rects = boxes.map((box) => {
+export function correctForOcclusion(
+  blocks: { text: string; box: [number, number][] }[],
+  blockIndex: number,
+  opts: OcclusionOpts = {},
+): number {
+  const gapFactor = opts.gapFactor ?? 1.1;
+  const minOverlap = opts.minOverlap ?? 0.3;
+  const rct = (box: [number, number][]) => {
     const xs = box.map(([x]) => x);
     const ys = box.map(([, y]) => y);
-    const t = Math.min(...ys);
-    const b = Math.max(...ys);
-    return { l: Math.min(...xs), r: Math.max(...xs), t, b, h: b - t };
-  });
-
-  const heights = rects.map((rc) => rc.h).filter((h) => h > 0).sort((a, b) => a - b);
-  const lineHeight = heights.length ? heights[Math.floor(heights.length / 2)] : frame.height * 0.03;
-  const vBand = vBandLines * lineHeight;
-  const hBand = hBandFrac * frame.width;
-
-  const scored = rects.map((rc, i) => {
-    const dx = Math.max(rc.l - point.x, point.x - rc.r, 0);
-    const dy = Math.max(rc.t - point.y, point.y - rc.b, 0);
-    const belowBias = rc.t > point.y ? lineHeight : 0; // occlusion: prefer at/above the tip
-    return { i, dx, dy, score: dx * dx + (dy + belowBias) * (dy + belowBias) };
-  });
-
-  const gated = scored.filter((s) => s.dx <= hBand && s.dy <= vBand);
-  const pool = gated.length ? gated : scored;
-  pool.sort((a, b) => a.score - b.score);
-  return pool.slice(0, max).map((s) => s.i);
+    return { l: Math.min(...xs), r: Math.max(...xs), t: Math.min(...ys), b: Math.max(...ys), h: Math.max(...ys) - Math.min(...ys) };
+  };
+  const target = blocks[blockIndex];
+  if (!target) return blockIndex;
+  const L = rct(target.box);
+  let above = -1;
+  let aboveBottom = -Infinity;
+  for (let i = 0; i < blocks.length; i++) {
+    if (i === blockIndex || blocks[i].text.trim() === "") continue;
+    const R = rct(blocks[i].box);
+    if (R.b >= L.t) continue; // must sit above the picked line
+    const overlap = Math.min(L.r, R.r) - Math.max(L.l, R.l);
+    if (overlap < minOverlap * Math.min(L.r - L.l, R.r - R.l)) continue; // needs x-overlap
+    if (R.b > aboveBottom) { aboveBottom = R.b; above = i; } // closest line above
+  }
+  return above >= 0 && L.t - aboveBottom < gapFactor * L.h ? above : blockIndex;
 }
 
 /**
@@ -205,6 +193,72 @@ export async function drawMarks(
     ctx.textAlign = "center";
     ctx.textBaseline = "middle";
     ctx.fillText(String(mark.n), cx, cy + r * 0.05);
+  }
+
+  return canvas.toDataURL("image/jpeg", 0.85);
+}
+
+/**
+ * ZOOMED word pass: crop the shot to the target line PLUS the strip below it
+ * (so the pointing fingertip — which sits about a line low — is in frame),
+ * scale up, and draw one big numbered chip above each word. Cropping + scaling
+ * survives the API's downscaling and lets the model judge the fingertip's
+ * horizontal alignment; the full-frame word pass could not. `boxSpace` is the
+ * scan frame's dims (the space the boxes live in). Returns a JPEG data URL.
+ */
+export async function drawWordMarksZoom(
+  shotBase64: string,
+  marks: { n: number; box: [number, number][] }[],
+  boxSpace: { width: number; height: number },
+): Promise<string> {
+  const img = await new Promise<HTMLImageElement>((resolve, reject) => {
+    const el = new Image();
+    el.onload = () => resolve(el);
+    el.onerror = () => reject(new Error("frame decode failed"));
+    el.src = shotBase64.startsWith("data:") ? shotBase64 : `data:image/jpeg;base64,${shotBase64}`;
+  });
+
+  const sx = img.naturalWidth / Math.max(1, boxSpace.width);
+  const sy = img.naturalHeight / Math.max(1, boxSpace.height);
+  const xs: number[] = [];
+  const ys: number[] = [];
+  for (const m of marks) for (const [x, y] of m.box) { xs.push(x * sx); ys.push(y * sy); }
+  const minX = Math.min(...xs), maxX = Math.max(...xs), minY = Math.min(...ys), maxY = Math.max(...ys);
+  const lh = Math.max(1, maxY - minY); // one line → bbox height ≈ line height
+
+  const ox = Math.max(0, minX - lh * 0.5);
+  const oy = Math.max(0, minY - lh * 0.9); // headroom for the chips above the words
+  const right = Math.min(img.naturalWidth, maxX + lh * 0.5);
+  const bottom = Math.min(img.naturalHeight, maxY + lh * 3); // strip below → the finger
+  const cw = Math.max(1, right - ox);
+  const ch = Math.max(1, bottom - oy);
+  const k = Math.max(1, Math.min(4, 1300 / cw));
+
+  const canvas = document.createElement("canvas");
+  canvas.width = Math.round(cw * k);
+  canvas.height = Math.round(ch * k);
+  const ctx = canvas.getContext("2d");
+  if (!ctx) throw new Error("2d context unavailable");
+  ctx.drawImage(img, ox, oy, cw, ch, 0, 0, canvas.width, canvas.height);
+
+  const r = Math.max(16, Math.min(32, lh * k * 0.5));
+  for (const m of marks) {
+    const bxs = m.box.map(([x]) => x * sx);
+    const bys = m.box.map(([, y]) => y * sy);
+    const cx = ((Math.min(...bxs) + Math.max(...bxs)) / 2 - ox) * k;
+    const cy = Math.max(r + 2, (Math.min(...bys) - oy) * k - r - 8);
+    ctx.beginPath();
+    ctx.arc(cx, cy, r, 0, Math.PI * 2);
+    ctx.fillStyle = "#ffffff";
+    ctx.fill();
+    ctx.lineWidth = Math.max(2, r * 0.16);
+    ctx.strokeStyle = "#ec4d25";
+    ctx.stroke();
+    ctx.fillStyle = "#22303f";
+    ctx.font = `bold ${Math.round(r * 1.1)}px system-ui, sans-serif`;
+    ctx.textAlign = "center";
+    ctx.textBaseline = "middle";
+    ctx.fillText(String(m.n), cx, cy + r * 0.05);
   }
 
   return canvas.toDataURL("image/jpeg", 0.85);
