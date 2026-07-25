@@ -11,7 +11,10 @@ export interface AppSettings {
   voice: string;
   rate: number; // 0.7–1.3, 1 = normal
   scope: "word" | "sentence" | "paragraph";
+  readingFont: ReadingFont;
 }
+
+export type ReadingFont = "standard" | "opendyslexic";
 
 const KEY = "dislexi.settings";
 
@@ -19,6 +22,7 @@ const DEFAULTS: AppSettings = {
   voice: "en-SG-LunaNeural",
   rate: 1,
   scope: "sentence",
+  readingFont: "standard",
 };
 
 export const VOICES: { id: string; label: string }[] = [
@@ -38,10 +42,16 @@ export function getSettings(): AppSettings {
       voice: typeof raw.voice === "string" ? raw.voice : DEFAULTS.voice,
       rate: Number.isFinite(rate) ? Math.min(1.3, Math.max(0.7, rate)) : DEFAULTS.rate,
       scope: raw.scope === "word" || raw.scope === "paragraph" ? raw.scope : DEFAULTS.scope,
+      readingFont: raw.readingFont === "opendyslexic" ? "opendyslexic" : DEFAULTS.readingFont,
     };
   } catch {
     return DEFAULTS;
   }
+}
+
+export function applyReadingFont(readingFont: ReadingFont): void {
+  if (typeof document === "undefined") return;
+  document.documentElement.dataset.readingFont = readingFont;
 }
 
 export function setSettings(patch: Partial<AppSettings>): AppSettings {
@@ -51,5 +61,6 @@ export function setSettings(patch: Partial<AppSettings>): AppSettings {
   } catch {
     /* private mode */
   }
+  applyReadingFont(next.readingFont);
   return next;
 }

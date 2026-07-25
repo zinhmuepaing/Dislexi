@@ -6,7 +6,7 @@
  */
 
 import { useEffect, useState } from "react";
-import { Volume2, Play } from "lucide-react";
+import { Check, Play, Type, Volume2 } from "lucide-react";
 import { getSettings, setSettings, VOICES, AppSettings } from "@/lib/settings";
 import { speak, stopSpeaking, primeSpeech } from "@/lib/speech";
 import { installAudioUnlock } from "@/lib/audio";
@@ -15,6 +15,15 @@ const SCOPES: { id: AppSettings["scope"]; label: string }[] = [
   { id: "word", label: "Word" },
   { id: "sentence", label: "Sentence" },
   { id: "paragraph", label: "Paragraph" },
+];
+
+const FONT_OPTIONS: {
+  id: AppSettings["readingFont"];
+  label: string;
+  previewClass: string;
+}[] = [
+  { id: "standard", label: "Standard", previewClass: "font-preview-standard" },
+  { id: "opendyslexic", label: "OpenDyslexic", previewClass: "font-preview-opendyslexic" },
 ];
 
 export default function SettingsPage() {
@@ -45,8 +54,52 @@ export default function SettingsPage() {
     <main className="mx-auto flex min-h-dvh w-full max-w-md flex-col gap-4 p-4 pb-24">
       <header className="pt-2">
         <h1 className="font-display text-2xl font-extrabold tracking-tight">Settings</h1>
-        <p className="mt-1 text-sm text-[var(--ink-soft)]">Tune the reading voice and defaults.</p>
+        <p className="mt-1 text-sm text-[var(--ink-soft)]">Make reading feel right for you.</p>
       </header>
+
+      {/* Reading font. */}
+      <section className="card p-4">
+        <div className="mb-3 flex items-center gap-2">
+          <Type size={19} color="var(--point)" aria-hidden />
+          <div>
+            <h2 className="font-semibold">Reading font</h2>
+            <p className="text-[12px] text-[var(--ink-soft)]">Choose the letters you find clearest.</p>
+          </div>
+        </div>
+        <div className="grid grid-cols-2 gap-2">
+          {FONT_OPTIONS.map((font) => {
+            const selected = s.readingFont === font.id;
+            return (
+              <button
+                key={font.id}
+                type="button"
+                onClick={() => update({ readingFont: font.id })}
+                aria-pressed={selected}
+                className={`press relative min-h-28 rounded-xl border-[1.5px] p-3 text-left ${
+                  selected
+                    ? "border-[var(--point)] bg-[color-mix(in_srgb,var(--coral)_14%,var(--paper-card))]"
+                    : "border-[var(--hairline)] bg-[var(--surface)]"
+                }`}
+              >
+                {selected && (
+                  <span className="absolute right-2 top-2 flex h-5 w-5 items-center justify-center rounded-full bg-[var(--point)] text-white">
+                    <Check size={13} strokeWidth={2.8} aria-hidden />
+                  </span>
+                )}
+                <span className={`block text-2xl font-bold ${font.previewClass}`} aria-hidden>
+                  Aa
+                </span>
+                <span className="mt-2 block text-[12px] font-semibold">{font.label}</span>
+                <span
+                  className={`mt-1 block truncate text-[11px] text-[var(--ink-soft)] ${font.previewClass}`}
+                >
+                  Find the perimeter
+                </span>
+              </button>
+            );
+          })}
+        </div>
+      </section>
 
       {/* Voice. */}
       <section className="card p-4">

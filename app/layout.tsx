@@ -1,7 +1,10 @@
 import type { Metadata, Viewport } from "next";
 import { Bricolage_Grotesque, Inter, IBM_Plex_Mono } from "next/font/google";
+import "@fontsource/opendyslexic/latin-400.css";
+import "@fontsource/opendyslexic/latin-700.css";
 import "./globals.css";
 import { BottomNav } from "@/components/BottomNav";
+import { SettingsInitializer } from "@/components/SettingsInitializer";
 
 // Hybrid theme (REWORK 3): Inter for UI/body (premium iOS feel, strong weight
 // contrast), Bricolage for display headings (paper signature), IBM Plex Mono
@@ -48,6 +51,7 @@ export default function RootLayout({
       className={`${bricolage.variable} ${inter.variable} ${plexMono.variable} h-full antialiased`}
     >
       <body className="min-h-full flex flex-col">
+        <SettingsInitializer />
         {children}
         <BottomNav />
       </body>
