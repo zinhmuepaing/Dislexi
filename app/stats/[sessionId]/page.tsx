@@ -14,11 +14,22 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import Link from "next/link";
 import { useParams } from "next/navigation";
-import { ChevronLeft, Send } from "lucide-react";
+import {
+  Activity,
+  ChevronLeft,
+  Clock3,
+  Download,
+  FileSpreadsheet,
+  FileText,
+  Puzzle,
+  Send,
+  Trophy,
+} from "lucide-react";
 import Chart from "chart.js/auto";
 import type { ChartConfiguration } from "chart.js";
 import * as XLSX from "xlsx";
 import { jsPDF } from "jspdf";
+import { MetricTile, PageHeader, PaperIcon } from "@/components/PaperUI";
 import type { SessionStats } from "@/lib/analytics";
 
 const CHARTS = [
@@ -54,6 +65,9 @@ export default function StatsPage() {
 
   useEffect(() => {
     if (!stats) return;
+    Chart.defaults.color = "#263746";
+    Chart.defaults.borderColor = "rgba(38,55,70,0.13)";
+    Chart.defaults.font.family = getComputedStyle(document.body).fontFamily;
     const mk = (key: ChartKey, config: ChartConfiguration) => {
       const canvas = canvasRefs.current[key];
       // Cap the canvas backing resolution (phones default to DPR 3): the
@@ -71,7 +85,10 @@ export default function StatsPage() {
           {
             label: "events",
             data: Object.values(stats.countsByType),
-            backgroundColor: "#2B6CB0",
+            backgroundColor: ["#F28C79", "#F4C75B", "#76BE98", "#A58AD4", "#E9D9BC"],
+            borderColor: "#263746",
+            borderWidth: 1,
+            borderRadius: 6,
           },
         ],
       },
@@ -85,7 +102,10 @@ export default function StatsPage() {
           {
             label: "re-reads",
             data: Object.values(stats.rereadsByQuestion),
-            backgroundColor: "#FFB020",
+            backgroundColor: "#F4C75B",
+            borderColor: "#263746",
+            borderWidth: 1,
+            borderRadius: 6,
           },
         ],
       },
@@ -99,7 +119,10 @@ export default function StatsPage() {
           {
             label: "requests",
             data: stats.topWords.map((w) => w.count),
-            backgroundColor: "#2F9E63",
+            backgroundColor: "#76BE98",
+            borderColor: "#263746",
+            borderWidth: 1,
+            borderRadius: 6,
           },
         ],
       },
@@ -113,8 +136,11 @@ export default function StatsPage() {
           {
             label: "gap (s)",
             data: stats.pacingGapsSeconds,
-            borderColor: "#2B6CB0",
-            backgroundColor: "rgba(43,108,176,0.2)",
+            borderColor: "#7458A6",
+            backgroundColor: "rgba(165,138,212,0.22)",
+            pointBackgroundColor: "#F28C79",
+            pointBorderColor: "#263746",
+            pointRadius: 3,
             fill: true,
             tension: 0.3,
           },
@@ -240,90 +266,158 @@ export default function StatsPage() {
 
   if (error) {
     return (
-      <main className="mx-auto w-full max-w-md p-4 pt-5">
-        <header className="flex items-center gap-3">
-          <Link href="/" className="press glass flex h-9 w-9 items-center justify-center rounded-full" aria-label="Home">
-            <ChevronLeft size={20} color="var(--ink)" />
-          </Link>
-          <h1 className="font-display text-xl font-extrabold">Session stats</h1>
-        </header>
-        <p className="mt-4 text-sm text-[var(--ink-soft)]">{error}</p>
+      <main className="page-shell max-w-3xl">
+        <PageHeader
+          eyebrow="Session complete"
+          title="Session stats"
+          subtitle="This page could not be drawn."
+          icon={Activity}
+          tone="coral"
+          action={
+            <Link href="/" className="paper-link" aria-label="Back to home">
+              <ChevronLeft size={16} aria-hidden /> Home
+            </Link>
+          }
+        />
+        <section className="paper-card paper-empty">
+          <PaperIcon icon={Activity} tone="coral" className="mb-4 h-16 w-16" size={30} />
+          <h2 className="font-display text-lg font-extrabold">No report yet</h2>
+          <p className="mt-1 max-w-sm text-sm text-[var(--muted-ink)]">{error}</p>
+        </section>
       </main>
     );
   }
 
   return (
-    <main className="mx-auto flex w-full max-w-md flex-1 flex-col gap-4 p-4 pt-5">
-      <header className="flex flex-wrap items-center gap-x-3 gap-y-2">
-        <Link href="/" className="press glass flex h-9 w-9 items-center justify-center rounded-full" aria-label="Home">
-          <ChevronLeft size={20} color="var(--ink)" />
-        </Link>
-        <h1 className="font-display text-xl font-extrabold">Session stats</h1>
-        <span className="stamp stamp-ok">Indicators — not assessments</span>
-      </header>
-      <p className="mono-hint">
-        struggle &amp; engagement indicators, derived from session events only
-      </p>
+    <main className="page-shell max-w-5xl">
+      <PageHeader
+        eyebrow="Session complete"
+        title="Your practice page"
+        subtitle="Patterns from this session — never an assessment."
+        icon={Activity}
+        tone="green"
+        action={
+          <Link href="/" className="paper-link" aria-label="Back to home">
+            <ChevronLeft size={16} aria-hidden /> Home
+          </Link>
+        }
+      />
+
       {!stats ? (
-        <p className="text-sm text-[var(--ink-soft)]">Loading…</p>
+        <section aria-label="Loading session report" aria-busy="true">
+          <div className="grid grid-cols-2 gap-3 lg:grid-cols-3">
+            {[0, 1, 2].map((item) => (
+              <div key={item} className="paper-card h-32 animate-pulse" aria-hidden />
+            ))}
+          </div>
+          <div className="paper-card mt-3 h-64 animate-pulse" aria-hidden />
+        </section>
       ) : (
         <>
-          <p className="text-sm">
-            {stats.totalEvents} events · median gap{" "}
-            {stats.medianGapSeconds !== null ? `${stats.medianGapSeconds}s` : "n/a"}
-            {stats.topGraphemes.length > 0 &&
-              ` · tricky patterns: ${stats.topGraphemes
+          <div className="grid grid-cols-2 gap-3 lg:grid-cols-3">
+            <MetricTile
+              label="Interactions"
+              value={stats.totalEvents}
+              icon={Activity}
+              tone="coral"
+            />
+            <MetricTile
+              label="Typical gap"
+              value={stats.medianGapSeconds !== null ? `${stats.medianGapSeconds}s` : "—"}
+              icon={Clock3}
+              tone="yellow"
+            />
+            <MetricTile
+              label="Tricky patterns"
+              value={stats.topGraphemes.length}
+              icon={Puzzle}
+              tone="purple"
+              hint={stats.topGraphemes
                 .slice(0, 3)
-                .map((g) => g.grapheme)
-                .join(", ")}`}
-          </p>
+                .map((item) => item.grapheme)
+                .join(" · ")}
+            />
+          </div>
 
           {stats.quiz && (
-            <section className="card p-3">
-              <div className="flex items-baseline justify-between gap-2">
-                <h2 className="text-sm font-semibold">Word quiz score</h2>
-                <span className="stamp stamp-ok">end-of-session quiz</span>
+            <section className="paper-card paper-panel-green mt-3 grid items-center gap-4 p-4 sm:grid-cols-[auto_1fr_auto] sm:p-5">
+              <PaperIcon icon={Trophy} tone="green" className="h-14 w-14" size={27} />
+              <div>
+                <p className="paper-kicker">End-of-session quiz</p>
+                <h2 className="font-display text-lg font-extrabold">Word quiz</h2>
+                <p className="mt-1 text-xs text-[var(--muted-ink)]">
+                  Pointed {stats.quiz.pointedCorrect}/{stats.quiz.pointedTotal} · skipped{" "}
+                  {stats.quiz.skipped}
+                </p>
               </div>
-              <p className="mt-2 font-display text-2xl font-extrabold">
+              <p className="font-display text-3xl font-extrabold">
                 {stats.quiz.saidCorrect}/{stats.quiz.saidTotal || stats.quiz.total}
-                <span className="ml-2 text-sm font-normal text-[var(--ink-soft)]">
-                  words read correctly
+                <span className="block text-right text-[10px] font-medium uppercase tracking-wider text-[var(--muted-ink)]">
+                  read right
                 </span>
-              </p>
-              <p className="mono-hint mt-1">
-                pointed correctly: {stats.quiz.pointedCorrect}/{stats.quiz.pointedTotal} · skipped:{" "}
-                {stats.quiz.skipped} · {stats.quiz.total} practiced
               </p>
             </section>
           )}
-          {CHARTS.map(({ key, title }) => (
-            <section key={key} className="card p-3">
-              <h2 className="mb-2 text-sm font-semibold">{title}</h2>
-              <canvas
-                ref={(el) => {
-                  canvasRefs.current[key] = el;
-                }}
-              />
-            </section>
-          ))}
-          <div className="flex flex-col gap-2">
-            <button
-              onClick={() => XLSX.writeFile(buildXlsx(), "session-stats.xlsx")}
-              className="btn btn-ghost"
-            >
-              Download XLSX
-            </button>
-            <button onClick={() => buildPdf().save("session-report.pdf")} className="btn btn-ghost">
-              Download PDF
-            </button>
-            <button
-              onClick={() => void sendToParent()}
-              className="btn-accent press flex items-center justify-center gap-1.5 py-3"
-            >
-              <Send size={16} /> Send to parent (Telegram)
-            </button>
-            {delivery && <p className="text-sm text-[var(--ink-soft)]">{delivery}</p>}
-          </div>
+
+          <section className="mt-4" aria-labelledby="charts-heading">
+            <div className="mb-3">
+              <p className="paper-kicker">Charts &amp; visuals</p>
+              <h2 id="charts-heading" className="paper-section-title">Session patterns</h2>
+            </div>
+            <div className="grid gap-3 lg:grid-cols-2">
+              {CHARTS.map(({ key, title }, index) => (
+                <article
+                  key={key}
+                  className={`paper-card p-4 ${
+                    ["paper-panel-coral", "paper-panel-yellow", "paper-panel-green", "paper-panel-purple"][index]
+                  }`}
+                >
+                  <p className="paper-kicker mb-1">Chart {index + 1}</p>
+                  <h3 className="mb-3 text-sm font-semibold">{title}</h3>
+                  <canvas
+                    ref={(element) => {
+                      canvasRefs.current[key] = element;
+                    }}
+                  />
+                </article>
+              ))}
+            </div>
+          </section>
+
+          <section className="paper-card mt-4 p-4 sm:p-5">
+            <div className="mb-3 flex items-center gap-3">
+              <PaperIcon icon={Download} tone="beige" />
+              <div>
+                <p className="paper-kicker">Take it with you</p>
+                <h2 className="font-display font-extrabold">Export this page</h2>
+              </div>
+            </div>
+            <div className="grid gap-2 sm:grid-cols-3">
+              <button
+                onClick={() => XLSX.writeFile(buildXlsx(), "session-stats.xlsx")}
+                className="btn-soft press flex min-h-12 items-center justify-center gap-2"
+              >
+                <FileSpreadsheet size={17} aria-hidden /> XLSX
+              </button>
+              <button
+                onClick={() => buildPdf().save("session-report.pdf")}
+                className="btn-soft press flex min-h-12 items-center justify-center gap-2"
+              >
+                <FileText size={17} aria-hidden /> PDF
+              </button>
+              <button
+                onClick={() => void sendToParent()}
+                className="btn-accent press flex min-h-12 items-center justify-center gap-2"
+              >
+                <Send size={17} aria-hidden /> Parent
+              </button>
+            </div>
+            {delivery && (
+              <p className="mt-3 text-center text-sm text-[var(--muted-ink)]" aria-live="polite">
+                {delivery}
+              </p>
+            )}
+          </section>
         </>
       )}
     </main>

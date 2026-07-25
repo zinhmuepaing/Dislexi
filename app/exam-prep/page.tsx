@@ -523,7 +523,7 @@ export default function ExamPrepPage() {
 
         {finding && (
           <div className="absolute inset-x-0 top-16 flex justify-center">
-            <span className="glass rounded-full px-3 py-1 text-[12px] font-medium text-[var(--ink)]">
+            <span className="tool-status">
               finding your finger…
             </span>
           </div>
@@ -534,28 +534,29 @@ export default function ExamPrepPage() {
       <div className="absolute left-2 top-2 z-10 flex items-center gap-2">
         <Link
           href="/"
-          className="press glass flex h-9 w-9 items-center justify-center rounded-full"
+          className="tool-icon-button press flex h-9 w-9 items-center justify-center"
           aria-label="Back to home"
         >
           <ChevronLeft size={20} color="var(--ink)" />
         </Link>
-        <span className="glass rounded-full px-3 py-1.5 text-sm font-semibold text-[var(--ink)]">
+        <span className="tool-badge px-3 py-1.5 text-sm font-semibold">
           Exam-Prep
         </span>
       </div>
 
       {/* Bottom floating glass control panel. */}
       <div className="absolute inset-x-0 bottom-0 z-10">
-        <div className="glass mx-auto max-w-md rounded-t-3xl px-4 pb-[max(16px,env(safe-area-inset-bottom))] pt-3">
+        <div className="tool-sheet mx-auto max-w-md rounded-t-[22px] px-4 pb-[max(16px,env(safe-area-inset-bottom))] pt-3">
+          <div className="mx-auto mb-2 h-1 w-9 rounded-full bg-[var(--ink)] opacity-20" aria-hidden />
           <div className="mb-2 flex flex-wrap items-center gap-1.5">
             {SCOPES.map((s) => (
               <button
                 key={s.id}
                 onClick={() => applyScope(s.id)}
-                className={`press rounded-full px-3 py-1 text-[12px] font-medium ${
+                className={`tool-chip press px-3 py-1 text-[12px] font-medium ${
                   scope === s.id
                     ? "bg-[var(--point)] text-white"
-                    : "bg-[var(--surface)] text-[var(--ink)] border border-[var(--hairline)]"
+                    : "text-[var(--ink)]"
                 }`}
                 aria-pressed={scope === s.id}
               >
@@ -564,8 +565,8 @@ export default function ExamPrepPage() {
             ))}
             <button
               onClick={() => void toggleMic()}
-              className={`press ml-auto flex items-center gap-1 rounded-full px-3 py-1 text-[12px] font-medium ${
-                listening ? "bg-[var(--ok)] text-white" : "bg-[var(--surface)] text-[var(--ink-soft)] border border-[var(--hairline)]"
+              className={`tool-chip press ml-auto flex items-center gap-1 px-3 py-1 text-[12px] font-medium ${
+                listening ? "bg-[var(--green-deep)] text-white" : "text-[var(--ink-soft)]"
               }`}
               aria-pressed={listening}
             >
@@ -592,12 +593,12 @@ export default function ExamPrepPage() {
             </button>
             <button
               onClick={() => void endSession()}
-              className="press flex flex-1 items-center justify-center gap-1.5 rounded-2xl bg-[var(--ink)] py-2 text-sm font-semibold text-white"
+              className="press flex flex-1 items-center justify-center gap-1.5 rounded-[10px] border-2 border-[var(--ink)] bg-[var(--ink)] py-2 text-sm font-semibold text-white shadow-[2px_3px_0_rgba(38,55,70,0.16)]"
             >
               <Square size={14} /> End
             </button>
           </div>
-          <p className="mt-1.5 text-center text-[12px] leading-snug text-[var(--ink-soft)]">{status}</p>
+          <p className="paper-kicker mt-2 text-center leading-snug">{status}</p>
         </div>
       </div>
     </main>

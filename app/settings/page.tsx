@@ -1,13 +1,22 @@
 "use client";
 
 /**
- * Settings tab (REWORK 3 P5) — reading voice + speed (wired into lib/speech
- * via lib/settings), default reading scope. Persisted in localStorage.
+ * Device-local reading preferences. Business behavior is unchanged: speech
+ * reads voice/rate at synthesis time and Exam-Prep reads the default scope.
  */
 
 import { useEffect, useState } from "react";
-import { Check, Play, Type, Volume2 } from "lucide-react";
-import { getSettings, setSettings, VOICES, AppSettings } from "@/lib/settings";
+import {
+  Check,
+  Gauge,
+  Play,
+  ScanLine,
+  Settings2,
+  Type,
+  Volume2,
+} from "lucide-react";
+import { PageHeader, PaperIcon } from "@/components/PaperUI";
+import { getSettings, setSettings, VOICES, type AppSettings } from "@/lib/settings";
 import { speak, stopSpeaking, primeSpeech } from "@/lib/speech";
 import { installAudioUnlock } from "@/lib/audio";
 
@@ -23,24 +32,25 @@ const FONT_OPTIONS: {
   previewClass: string;
 }[] = [
   { id: "standard", label: "Standard", previewClass: "font-preview-standard" },
-  { id: "opendyslexic", label: "OpenDyslexic", previewClass: "font-preview-opendyslexic" },
+  {
+    id: "opendyslexic",
+    label: "OpenDyslexic",
+    previewClass: "font-preview-opendyslexic",
+  },
 ];
 
 export default function SettingsPage() {
-  const [s, setS] = useState<AppSettings | null>(null);
+  const [settings, setLocalSettings] = useState<AppSettings | null>(null);
 
   useEffect(() => {
     installAudioUnlock();
     primeSpeech();
-    // Deferred (post-hydration) so the localStorage read doesn't run as a
-    // synchronous setState in the effect body.
-    const t = setTimeout(() => setS(getSettings()), 0);
-    return () => clearTimeout(t);
+    const timer = setTimeout(() => setLocalSettings(getSettings()), 0);
+    return () => clearTimeout(timer);
   }, []);
 
   function update(patch: Partial<AppSettings>) {
-    const next = setSettings(patch);
-    setS(next);
+    setLocalSettings(setSettings(patch));
   }
 
   function testVoice() {
@@ -48,138 +58,177 @@ export default function SettingsPage() {
     void speak("Find the perimeter of the rectangle below.").catch(() => {});
   }
 
-  if (!s) return <main className="mx-auto w-full max-w-md p-4" />;
+  if (!settings) {
+    return (
+      <main className="page-shell max-w-4xl" aria-busy="true">
+        <div className="mb-4 h-16 animate-pulse rounded-xl bg-[var(--line)]" />
+        <div className="grid gap-3 md:grid-cols-2">
+          <div className="paper-card h-48 animate-pulse" />
+          <div className="paper-card h-48 animate-pulse" />
+        </div>
+      </main>
+    );
+  }
 
   return (
-    <main className="mx-auto flex min-h-dvh w-full max-w-md flex-col gap-4 p-4 pb-24">
-      <header className="pt-2">
-        <h1 className="font-display text-2xl font-extrabold tracking-tight">Settings</h1>
-        <p className="mt-1 text-sm text-[var(--ink-soft)]">Make reading feel right for you.</p>
-      </header>
+    <main className="page-shell max-w-4xl">
+      <PageHeader
+        eyebrow="Your reading setup"
+        title="Settings"
+        subtitle="Choose what feels clearest and most comfortable."
+        icon={Settings2}
+        tone="purple"
+      />
 
-      {/* Reading font. */}
-      <section className="card p-4">
-        <div className="mb-3 flex items-center gap-2">
-          <Type size={19} color="var(--point)" aria-hidden />
-          <div>
-            <h2 className="font-semibold">Reading font</h2>
-            <p className="text-[12px] text-[var(--ink-soft)]">Choose the letters you find clearest.</p>
+      <div className="grid gap-3 md:grid-cols-2">
+        <section className="paper-card paper-panel-coral p-4 md:col-span-2 sm:p-5">
+          <div className="mb-4 flex items-center gap-3">
+            <PaperIcon icon={Type} tone="coral" />
+            <div>
+              <p className="paper-kicker">Accessibility</p>
+              <h2 className="font-display font-extrabold">Reading font</h2>
+            </div>
           </div>
-        </div>
-        <div className="grid grid-cols-2 gap-2">
-          {FONT_OPTIONS.map((font) => {
-            const selected = s.readingFont === font.id;
-            return (
-              <button
-                key={font.id}
-                type="button"
-                onClick={() => update({ readingFont: font.id })}
-                aria-pressed={selected}
-                className={`press relative min-h-28 rounded-xl border-[1.5px] p-3 text-left ${
-                  selected
-                    ? "border-[var(--point)] bg-[color-mix(in_srgb,var(--coral)_14%,var(--paper-card))]"
-                    : "border-[var(--hairline)] bg-[var(--surface)]"
-                }`}
-              >
-                {selected && (
-                  <span className="absolute right-2 top-2 flex h-5 w-5 items-center justify-center rounded-full bg-[var(--point)] text-white">
-                    <Check size={13} strokeWidth={2.8} aria-hidden />
-                  </span>
-                )}
-                <span className={`block text-2xl font-bold ${font.previewClass}`} aria-hidden>
-                  Aa
-                </span>
-                <span className="mt-2 block text-[12px] font-semibold">{font.label}</span>
-                <span
-                  className={`mt-1 block truncate text-[11px] text-[var(--ink-soft)] ${font.previewClass}`}
+          <div className="grid grid-cols-2 gap-3">
+            {FONT_OPTIONS.map((font) => {
+              const selected = settings.readingFont === font.id;
+              return (
+                <button
+                  key={font.id}
+                  type="button"
+                  onClick={() => update({ readingFont: font.id })}
+                  aria-pressed={selected}
+                  className={`settings-option press relative min-h-32 p-4 text-left ${
+                    selected ? "settings-option-selected" : ""
+                  }`}
                 >
-                  Find the perimeter
-                </span>
-              </button>
-            );
-          })}
-        </div>
-      </section>
+                  {selected && (
+                    <span className="absolute right-3 top-3 flex h-6 w-6 items-center justify-center rounded-full border-[1.5px] border-[var(--ink)] bg-[var(--point)] text-white">
+                      <Check size={14} strokeWidth={2.8} aria-hidden />
+                    </span>
+                  )}
+                  <span className={`block text-3xl font-bold ${font.previewClass}`} aria-hidden>
+                    Aa
+                  </span>
+                  <span className="mt-3 block text-sm font-semibold">{font.label}</span>
+                  <span
+                    className={`mt-1 block truncate text-xs text-[var(--muted-ink)] ${font.previewClass}`}
+                  >
+                    Find the perimeter
+                  </span>
+                </button>
+              );
+            })}
+          </div>
+        </section>
 
-      {/* Voice. */}
-      <section className="card p-4">
-        <div className="mb-2 flex items-center gap-2">
-          <Volume2 size={18} color="var(--point)" />
-          <h2 className="font-semibold">Reading voice</h2>
-        </div>
-        <div className="flex flex-col gap-1.5">
-          {VOICES.map((v) => (
-            <button
-              key={v.id}
-              onClick={() => update({ voice: v.id })}
-              className={`press flex items-center justify-between rounded-xl border px-3 py-2.5 text-left text-sm ${
-                s.voice === v.id
-                  ? "border-[var(--point)] bg-[color-mix(in_srgb,var(--point)_10%,white)] font-semibold"
-                  : "border-[var(--hairline)] bg-[var(--surface)]"
-              }`}
-            >
-              {v.label}
-              {s.voice === v.id && <span className="text-[var(--point)]">selected</span>}
-            </button>
-          ))}
-        </div>
-      </section>
+        <section className="paper-card p-4 md:col-span-2 sm:p-5">
+          <div className="mb-4 flex items-center gap-3">
+            <PaperIcon icon={Volume2} tone="green" />
+            <div>
+              <p className="paper-kicker">Sound</p>
+              <h2 className="font-display font-extrabold">Reading voice</h2>
+            </div>
+          </div>
+          <div className="grid gap-2 sm:grid-cols-2">
+            {VOICES.map((voice) => {
+              const selected = settings.voice === voice.id;
+              return (
+                <button
+                  key={voice.id}
+                  onClick={() => update({ voice: voice.id })}
+                  className={`settings-option press flex min-h-11 items-center justify-between gap-2 px-3 py-2 text-left text-sm ${
+                    selected ? "settings-option-selected font-semibold" : ""
+                  }`}
+                  aria-pressed={selected}
+                >
+                  <span>{voice.label}</span>
+                  {selected && (
+                    <span className="flex h-5 w-5 shrink-0 items-center justify-center rounded-full bg-[var(--green-deep)] text-white">
+                      <Check size={12} strokeWidth={2.8} aria-hidden />
+                    </span>
+                  )}
+                </button>
+              );
+            })}
+          </div>
+        </section>
 
-      {/* Speed. */}
-      <section className="card p-4">
-        <div className="mb-1 flex items-center justify-between">
-          <h2 className="font-semibold">Speaking speed</h2>
-          <span className="text-sm font-semibold text-[var(--point)]">{s.rate.toFixed(2)}×</span>
-        </div>
-        <input
-          type="range"
-          min={0.7}
-          max={1.3}
-          step={0.05}
-          value={s.rate}
-          onChange={(e) => update({ rate: Number(e.target.value) })}
-          className="w-full accent-[var(--point)]"
-          aria-label="Speaking speed"
-        />
-        <div className="flex justify-between text-[11px] text-[var(--ink-soft)]">
-          <span>Slower</span>
-          <span>Normal</span>
-          <span>Faster</span>
-        </div>
-        <button
-          onClick={testVoice}
-          className="btn-soft press mt-3 flex w-full items-center justify-center gap-1.5 py-2.5 text-sm"
-        >
-          <Play size={16} /> Test voice
-        </button>
-      </section>
+        <section className="paper-card paper-panel-yellow flex flex-col p-4 sm:p-5">
+          <div className="mb-4 flex items-center gap-3">
+            <PaperIcon icon={Gauge} tone="yellow" />
+            <div>
+              <p className="paper-kicker">Pace</p>
+              <h2 className="font-display font-extrabold">Speaking speed</h2>
+            </div>
+          </div>
+          <div className="flex items-end justify-between">
+            <span className="text-xs text-[var(--muted-ink)]">Slower</span>
+            <strong className="font-display text-2xl text-[var(--coral-deep)]">
+              {settings.rate.toFixed(2)}×
+            </strong>
+            <span className="text-xs text-[var(--muted-ink)]">Faster</span>
+          </div>
+          <input
+            type="range"
+            min={0.7}
+            max={1.3}
+            step={0.05}
+            value={settings.rate}
+            onChange={(event) => update({ rate: Number(event.target.value) })}
+            className="mt-3 w-full accent-[var(--point)]"
+            aria-label="Speaking speed"
+          />
+          <button
+            onClick={testVoice}
+            className="btn-soft press mt-auto flex min-h-11 w-full items-center justify-center gap-2 text-sm"
+          >
+            <Play size={16} aria-hidden /> Test voice
+          </button>
+        </section>
 
-      {/* Default reading scope. */}
-      <section className="card p-4">
-        <h2 className="mb-2 font-semibold">Default reading scope</h2>
-        <p className="mb-2 text-[13px] text-[var(--ink-soft)]">
-          How much Exam-Prep reads when you point.
-        </p>
-        <div className="flex gap-2">
-          {SCOPES.map((sc) => (
-            <button
-              key={sc.id}
-              onClick={() => update({ scope: sc.id })}
-              className={`press flex-1 rounded-xl border py-2.5 text-sm font-medium ${
-                s.scope === sc.id
-                  ? "border-[var(--point)] bg-[var(--point)] text-white"
-                  : "border-[var(--hairline)] bg-[var(--surface)]"
-              }`}
-            >
-              {sc.label}
-            </button>
-          ))}
-        </div>
-      </section>
+        <section className="paper-card paper-panel-purple flex flex-col p-4 sm:p-5">
+          <div className="mb-4 flex items-center gap-3">
+            <PaperIcon icon={ScanLine} tone="purple" />
+            <div>
+              <p className="paper-kicker">Exam-Prep</p>
+              <h2 className="font-display font-extrabold">Reading scope</h2>
+            </div>
+          </div>
+          <div className="grid grid-cols-3 gap-2">
+            {SCOPES.map((scope) => {
+              const selected = settings.scope === scope.id;
+              return (
+                <button
+                  key={scope.id}
+                  onClick={() => update({ scope: scope.id })}
+                  className={`settings-option press min-h-12 px-2 text-sm font-medium ${
+                    selected
+                      ? "settings-scope-selected"
+                      : ""
+                  }`}
+                  aria-pressed={selected}
+                >
+                  {scope.label}
+                </button>
+              );
+            })}
+          </div>
+          <p className="mt-auto pt-4 text-xs text-[var(--muted-ink)]">
+            Sets how much text is read after pointing.
+          </p>
+        </section>
+      </div>
 
-      <p className="text-center text-[12px] text-[var(--ink-soft)]">
-        Camera (front/rear) and the mirror clip are set inside each tool.
-      </p>
+      <aside className="paper-card paper-panel-beige mt-3 flex items-center gap-3 p-4">
+        <PaperIcon icon={ScanLine} tone="beige" />
+        <div>
+          <p className="font-semibold">Camera controls stay with each tool</p>
+          <p className="mt-0.5 text-xs text-[var(--muted-ink)]">
+            Front, rear and mirror-clip choices are beside the live camera.
+          </p>
+        </div>
+      </aside>
     </main>
   );
 }

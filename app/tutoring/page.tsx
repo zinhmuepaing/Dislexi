@@ -459,18 +459,18 @@ export default function TutoringPage() {
       <div className="absolute left-2 top-2 z-10 flex items-center gap-2">
         <Link
           href="/"
-          className="press glass flex h-9 w-9 items-center justify-center rounded-full"
+          className="tool-icon-button press flex h-9 w-9 items-center justify-center"
           aria-label="Back to home"
         >
           <ChevronLeft size={20} color="var(--ink)" />
         </Link>
-        <span className="glass rounded-full px-3 py-1.5 text-sm font-semibold text-[var(--ink)]">
+        <span className="tool-badge px-3 py-1.5 text-sm font-semibold">
           AI Tutoring
         </span>
         {frame && (
           <button
             onClick={retake}
-            className="press glass flex h-9 w-9 items-center justify-center rounded-full"
+            className="tool-icon-button press flex h-9 w-9 items-center justify-center"
             aria-label="New photo"
           >
             <Camera size={18} color="var(--ink)" />
@@ -481,7 +481,7 @@ export default function TutoringPage() {
       {/* Thinking indicator floats over the camera. */}
       {busy && (
         <div className="absolute inset-x-0 top-16 z-10 flex justify-center">
-          <div className="glass flex items-center gap-2 rounded-full px-4 py-2" role="status" aria-live="polite">
+          <div className="tool-status gap-2 px-4 py-2" role="status" aria-live="polite">
             <span className="flex gap-1.5" aria-hidden>
               <span className="think-dot" />
               <span className="think-dot" />
@@ -494,9 +494,10 @@ export default function TutoringPage() {
 
       {/* Bottom floating glass panel. */}
       <div className="absolute inset-x-0 bottom-0 z-10">
-        <div className="glass mx-auto flex max-h-[54dvh] max-w-md flex-col gap-2 rounded-t-3xl px-4 pb-[max(16px,env(safe-area-inset-bottom))] pt-3">
+        <div className="tool-sheet mx-auto flex max-h-[54dvh] max-w-md flex-col gap-2 rounded-t-[22px] px-4 pb-[max(16px,env(safe-area-inset-bottom))] pt-3">
+          <div className="mx-auto h-1 w-9 shrink-0 rounded-full bg-[var(--ink)] opacity-20" aria-hidden />
           {errorMsg && !busy && (
-            <div className="fadein rounded-xl border border-[var(--margin)] bg-[var(--surface)] p-2.5 text-sm">
+            <div className="fadein rounded-[10px] border-[1.5px] border-[var(--coral-deep)] bg-[color-mix(in_srgb,var(--coral)_12%,var(--paper-card))] p-2.5 text-sm">
               {errorMsg}
             </div>
           )}
@@ -504,12 +505,12 @@ export default function TutoringPage() {
           {steps.length > 0 && !busy && (
             <div className="flex min-h-0 flex-col gap-1.5">
               <div className="flex items-center justify-between">
-                <span className="text-[12px] font-medium text-[var(--ink-soft)]">
+                <span className="paper-kicker">
                   step {activeStep >= 0 ? activeStep + 1 : 1} of {steps.length} · watch the paper
                 </span>
                 <button
                   onClick={() => setShowText((v) => !v)}
-                  className="press flex items-center gap-1 rounded-full border border-[var(--hairline)] bg-[var(--surface)] px-2.5 py-1 text-[11px] font-medium"
+                  className="tool-chip press flex items-center gap-1 px-2.5 py-1 text-[11px] font-medium"
                   aria-pressed={showText}
                 >
                   {showText ? <EyeOff size={13} /> : <Eye size={13} />}
@@ -523,10 +524,10 @@ export default function TutoringPage() {
                     <li key={i} className="fadein">
                       <button
                         onClick={() => playStep(i)}
-                        className={`w-full rounded-xl border p-2.5 text-left text-sm ${
+                        className={`settings-option w-full p-2.5 text-left text-sm ${
                           i === activeStep
-                            ? "border-[var(--hl-strong)] bg-[rgba(255,211,77,0.18)]"
-                            : "border-[var(--hairline)] bg-[var(--surface)]"
+                            ? "settings-option-selected border-[var(--yellow-deep)] bg-[color-mix(in_srgb,var(--yellow)_18%,var(--paper-card))]"
+                            : ""
                         }`}
                       >
                         <span className="mr-2 text-[12px] font-semibold text-[var(--point)]">Step {i + 1}</span>
@@ -541,10 +542,10 @@ export default function TutoringPage() {
                     <button
                       key={i}
                       onClick={() => playStep(i)}
-                      className={`press h-8 w-8 rounded-full border-[1.5px] text-xs font-semibold ${
+                      className={`press h-8 w-8 rounded-[8px] border-[1.5px] border-[var(--ink)] text-xs font-semibold shadow-[2px_2px_0_rgba(38,55,70,0.12)] ${
                         i === activeStep
                           ? "border-[var(--point)] bg-[var(--point)] text-white"
-                          : "border-[var(--hairline)] bg-[var(--surface)] text-[var(--ink)]"
+                          : "bg-[var(--paper-card)] text-[var(--ink)]"
                       }`}
                       aria-label={`Step ${i + 1}`}
                     >
@@ -563,12 +564,12 @@ export default function TutoringPage() {
               onChange={(e) => setQuestion(e.target.value)}
               onKeyDown={(e) => e.key === "Enter" && void ask()}
               placeholder={listening ? "Just speak — or type here…" : "Ask about the worksheet…"}
-              className="min-w-0 flex-1 rounded-2xl border border-[var(--hairline)] bg-[var(--surface)] px-3.5 py-2.5 text-[15px] placeholder:text-[var(--ink-soft)] focus:outline-2 focus:outline-[var(--point)]"
+              className="paper-input min-w-0 flex-1 px-3.5 py-2.5 text-[15px] placeholder:text-[var(--ink-soft)]"
             />
             <button
               onClick={() => void toggleMic()}
-              className={`press flex h-11 w-11 items-center justify-center rounded-full ${
-                listening ? "bg-[var(--ok)] text-white" : "bg-[var(--surface)] text-[var(--ink-soft)] border border-[var(--hairline)]"
+              className={`tool-icon-button press flex h-11 w-11 items-center justify-center ${
+                listening ? "bg-[var(--green-deep)] text-white" : "text-[var(--ink-soft)]"
               }`}
               aria-label={listening ? "Turn microphone off" : "Turn microphone on"}
               aria-pressed={listening}

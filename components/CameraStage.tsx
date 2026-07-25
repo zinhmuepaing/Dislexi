@@ -256,20 +256,20 @@ export const CameraStage = forwardRef<CameraStageHandle, CameraStageProps>(
       getCanvas: () => canvasRef.current,
     }));
 
-    // Camera toggles — glass pills that float top-right in both modes.
+    // Camera toggles — paper chips that float top-right in both modes.
     const controls = (
       <div className="absolute right-2 top-2 z-10 flex gap-1.5">
         <button
           onClick={toggleFacing}
-          className="press glass pointer-events-auto flex items-center gap-1 rounded-full px-2.5 py-1.5 text-[11px] font-medium text-[var(--ink)]"
+          className="tool-chip press pointer-events-auto flex items-center gap-1 px-2.5 py-1.5 text-[11px] font-medium"
           aria-label="Switch between front and rear camera"
         >
           <SwitchCamera size={14} /> {facing === "user" ? "Front" : "Rear"}
         </button>
         <button
           onClick={toggleMirror}
-          className={`press pointer-events-auto flex items-center gap-1 rounded-full px-2.5 py-1.5 text-[11px] font-medium ${
-            mirror ? "bg-[var(--hl)] text-[var(--ink)]" : "glass text-[var(--ink-soft)]"
+          className={`tool-chip press pointer-events-auto flex items-center gap-1 px-2.5 py-1.5 text-[11px] font-medium ${
+            mirror ? "bg-[var(--yellow)] text-[var(--ink)]" : "text-[var(--ink-soft)]"
           }`}
           aria-label="Toggle mirror-clip compensation"
           aria-pressed={mirror}
@@ -307,7 +307,7 @@ export const CameraStage = forwardRef<CameraStageHandle, CameraStageProps>(
     return (
       // Non-fullBleed: viewport-capped, shrink-wrapped so overlays align.
       <div className="flex w-full justify-center">
-        <div className="relative min-h-[120px] min-w-[240px] w-fit max-w-full overflow-hidden rounded-xl border-[1.5px] border-[var(--ink)] bg-[var(--ink)]">
+        <div className="relative min-h-[120px] min-w-[240px] w-fit max-w-full overflow-hidden rounded-xl border-2 border-[var(--ink)] bg-[var(--ink)] shadow-[4px_5px_0_rgba(38,55,70,0.14)]">
           <video ref={videoRef} playsInline muted className="hidden" />
           <canvas ref={canvasRef} className={`block h-auto w-auto max-w-full ${maxHeightClass}`} />
           <div className="pointer-events-none absolute inset-0">{children}</div>

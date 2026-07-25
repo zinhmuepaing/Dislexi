@@ -48,7 +48,7 @@ export function FormulaCard({ formula, region }: { formula: string; region: Regi
       // break between parts, and the camera overlay's box is narrow, so a
       // `%` cap would shrink the card back down and force multi-line breaks
       // (the reported bug). Only formulas wider than 86vw hit the cap + wrap.
-      className="fadein pointer-events-none absolute z-10 w-max max-w-[86vw] -translate-x-1/2 rounded-xl border-[1.5px] border-[var(--ink)] bg-[var(--paper)] px-2.5 py-1.5 shadow-[0_6px_18px_-6px_rgba(34,48,63,0.5)]"
+      className="fadein pointer-events-none absolute z-10 w-max max-w-[86vw] -translate-x-1/2 rotate-[-0.5deg] rounded-[10px] border-2 border-[var(--ink)] bg-[var(--paper-card)] px-3 py-2 shadow-[4px_5px_0_rgba(38,55,70,0.18)]"
       style={{
         left: `${cx * 100}%`,
         top: above ? undefined : `${(region.y + region.h) * 100 + 2}%`,

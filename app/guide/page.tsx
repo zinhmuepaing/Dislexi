@@ -1,108 +1,148 @@
+import Link from "next/link";
 import {
   BookOpenText,
   Camera,
+  ChevronRight,
+  FlipHorizontal2,
   GraduationCap,
   Hand,
   ShieldCheck,
+  Sparkles,
   SpellCheck2,
+  Sun,
 } from "lucide-react";
+import { PageHeader, PaperIcon, type PaperTone } from "@/components/PaperUI";
 
-const MODES = [
+const SETUP_STEPS: {
+  label: string;
+  hint: string;
+  Icon: typeof Camera;
+  tone: PaperTone;
+}[] = [
+  { label: "Place phone", hint: "Stand above the page", Icon: Camera, tone: "coral" },
+  { label: "Light the page", hint: "Keep every line clear", Icon: Sun, tone: "yellow" },
+  { label: "Check mirror", hint: "Match the physical clip", Icon: FlipHorizontal2, tone: "purple" },
+];
+
+const MODES: {
+  href: string;
+  title: string;
+  description: string;
+  Icon: typeof BookOpenText;
+  tone: PaperTone;
+  panelClass: string;
+}[] = [
   {
+    href: "/exam-prep",
     title: "Exam-Prep",
-    description: "Rest your finger on a line or word to hear the worksheet read exactly as printed.",
+    description: "Hear the printed words exactly.",
     Icon: BookOpenText,
-    color: "var(--point)",
+    tone: "coral",
+    panelClass: "paper-panel-coral",
   },
   {
+    href: "/tutoring",
     title: "AI Tutoring",
-    description: "Ask a question and follow the narrated steps highlighted directly on the worksheet.",
+    description: "See each step on the worksheet.",
     Icon: GraduationCap,
-    color: "var(--ai)",
+    tone: "purple",
+    panelClass: "paper-panel-purple",
   },
   {
-    title: "Stuck-Word Autopsy",
-    description: "Choose a difficult word, hear it broken down, then practise it with a short quiz.",
+    href: "/autopsy",
+    title: "Word Autopsy",
+    description: "Break down and practise a word.",
     Icon: SpellCheck2,
-    color: "var(--ok)",
+    tone: "green",
+    panelClass: "paper-panel-green",
   },
 ];
 
 export default function GuidePage() {
   return (
-    <main className="mx-auto flex min-h-dvh w-full max-w-md flex-col gap-4 p-4 pb-28">
-      <header className="pt-2">
-        <p className="eyebrow">Quick start</p>
-        <h1 className="font-display mt-1 text-2xl font-extrabold tracking-tight">
-          Using Dislexi
-        </h1>
-        <p className="mt-1 text-sm text-[var(--ink-soft)]">
-          Set up the phone once, then choose the kind of help you need.
-        </p>
-      </header>
+    <main className="page-shell max-w-4xl">
+      <PageHeader
+        eyebrow="Quick start"
+        title="Using Dislexi"
+        subtitle="Three small steps, then choose your tool."
+        icon={Sparkles}
+        tone="yellow"
+      />
 
-      <section className="card p-4">
-        <div className="flex items-start gap-3">
-          <span className="flex h-11 w-11 shrink-0 items-center justify-center rounded-2xl bg-[color-mix(in_srgb,var(--point)_12%,white)]">
-            <Camera size={22} color="var(--point)" aria-hidden />
-          </span>
+      <section aria-labelledby="setup-heading">
+        <div className="mb-3 flex items-end justify-between">
           <div>
-            <h2 className="font-display text-lg font-extrabold">Set up the camera</h2>
-            <ol className="mt-2 space-y-2 text-sm text-[var(--ink-soft)]">
-              <li><strong className="text-[var(--ink)]">1.</strong> Place the phone in the stand above the worksheet.</li>
-              <li><strong className="text-[var(--ink)]">2.</strong> Keep the whole question visible and well lit.</li>
-              <li><strong className="text-[var(--ink)]">3.</strong> Turn on Mirror clip only when the physical mirror is attached.</li>
-            </ol>
+            <p className="paper-kicker">01 · setup</p>
+            <h2 id="setup-heading" className="paper-section-title">Ready the page</h2>
           </div>
+          <span className="stamp stamp-ok">about 20 seconds</span>
         </div>
-      </section>
-
-      <section className="card p-4">
-        <div className="flex items-start gap-3">
-          <span className="flex h-11 w-11 shrink-0 items-center justify-center rounded-2xl bg-[color-mix(in_srgb,var(--hl)_28%,white)]">
-            <Hand size={22} color="var(--ink)" aria-hidden />
-          </span>
-          <div>
-            <h2 className="font-display text-lg font-extrabold">Use your finger</h2>
-            <p className="mt-1 text-sm text-[var(--ink-soft)]">
-              For the most accurate result, rest your fingertip directly on the word instead of
-              pointing from below. Keep the paper and phone still while Dislexi checks the page.
-            </p>
-          </div>
-        </div>
-      </section>
-
-      <section aria-labelledby="guide-modes">
-        <h2 id="guide-modes" className="font-display mb-2 text-lg font-extrabold">
-          Choose a mode
-        </h2>
-        <div className="flex flex-col gap-2">
-          {MODES.map(({ title, description, Icon, color }) => (
-            <article key={title} className="card flex items-start gap-3 p-3.5">
-              <span
-                className="flex h-10 w-10 shrink-0 items-center justify-center rounded-xl"
-                style={{ background: `color-mix(in srgb, ${color} 13%, white)` }}
-              >
-                <Icon size={20} color={color} aria-hidden />
+        <div className="grid gap-3 sm:grid-cols-3">
+          {SETUP_STEPS.map(({ label, hint, Icon, tone }, index) => (
+            <article key={label} className="paper-card relative p-4">
+              <span className="absolute right-3 top-2 font-mono text-3xl font-medium text-[var(--line)]">
+                {index + 1}
               </span>
-              <div>
-                <h3 className="font-semibold">{title}</h3>
-                <p className="mt-0.5 text-[13px] leading-relaxed text-[var(--ink-soft)]">
-                  {description}
-                </p>
-              </div>
+              <PaperIcon icon={Icon} tone={tone} />
+              <h3 className="mt-5 font-semibold">{label}</h3>
+              <p className="mt-1 text-xs text-[var(--muted-ink)]">{hint}</p>
             </article>
           ))}
         </div>
       </section>
 
-      <section className="card flex items-start gap-3 p-4">
-        <ShieldCheck size={22} className="mt-0.5 shrink-0 text-[var(--ok)]" aria-hidden />
+      <section className="paper-card paper-panel-yellow my-4 grid items-center gap-4 p-4 sm:grid-cols-[auto_1fr] sm:p-5">
+        <span className="paper-illustration mx-auto h-24 w-28">
+          <Hand size={44} strokeWidth={1.8} aria-hidden />
+        </span>
         <div>
-          <h2 className="font-semibold">Your privacy</h2>
-          <p className="mt-1 text-[13px] leading-relaxed text-[var(--ink-soft)]">
-            Dislexi does not store raw microphone audio. The microphone is used only for commands
-            and tutoring questions.
+          <p className="paper-kicker">Best gesture</p>
+          <h2 className="font-display mt-1 text-xl font-extrabold">Rest on the word</h2>
+          <p className="mt-2 text-sm text-[var(--muted-ink)]">
+            Touch the word with your fingertip and keep the page still. This is more accurate than
+            pointing from below.
+          </p>
+          <div className="mt-3 flex items-center gap-2" aria-hidden>
+            <span className="h-2 flex-1 rounded bg-[var(--line)]" />
+            <span className="h-4 w-4 rounded-full border-2 border-[var(--ink)] bg-[var(--coral)]" />
+            <span className="h-2 flex-1 rounded bg-[var(--line)]" />
+          </div>
+        </div>
+      </section>
+
+      <section aria-labelledby="modes-heading">
+        <div className="mb-3">
+          <p className="paper-kicker">02 · choose</p>
+          <h2 id="modes-heading" className="paper-section-title">Pick a mode</h2>
+        </div>
+        <div className="grid gap-3 md:grid-cols-3">
+          {MODES.map(({ href, title, description, Icon, tone, panelClass }) => (
+            <Link
+              key={href}
+              href={href}
+              className={`paper-card press group flex min-h-36 flex-col p-4 ${panelClass}`}
+            >
+              <div className="flex items-start justify-between">
+                <PaperIcon icon={Icon} tone={tone} />
+                <ChevronRight
+                  size={20}
+                  className="transition-transform group-hover:translate-x-1"
+                  aria-hidden
+                />
+              </div>
+              <h3 className="font-display mt-5 font-extrabold">{title}</h3>
+              <p className="mt-1 text-xs text-[var(--muted-ink)]">{description}</p>
+            </Link>
+          ))}
+        </div>
+      </section>
+
+      <section className="paper-card paper-panel-green mt-4 flex items-center gap-3 p-4">
+        <PaperIcon icon={ShieldCheck} tone="green" />
+        <div>
+          <h2 className="font-semibold">Audio stays private</h2>
+          <p className="mt-0.5 text-xs text-[var(--muted-ink)]">
+            Commands are processed, but raw microphone audio is never stored.
           </p>
         </div>
       </section>
