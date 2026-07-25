@@ -1,13 +1,13 @@
 "use client";
 
 /**
- * Home — hybrid iOS look on the paper base. Brand row (app-icon slot +
- * "Dislexi" wordmark), a signature karaoke demo, and a 7-day practice summary.
- * The three modes are reached from the Scan button in the bottom nav, so the
- * home page shows progress rather than duplicating those entry points.
+ * Home — visual notebook dashboard. The three learning modes remain behind
+ * the centre Scan action; Home focuses on a readable seven-day snapshot.
  */
 
 import { useEffect, useState } from "react";
+import { CalendarDays, Sparkles } from "lucide-react";
+import { BrandMark } from "@/components/BrandMark";
 import { LottieBadge } from "@/components/LottieBadge";
 import { PracticeSummary } from "@/components/PracticeSummary";
 
@@ -23,50 +23,51 @@ export default function ModeSelector() {
   }, []);
 
   return (
-    <main className="mx-auto flex h-dvh w-full max-w-md flex-col gap-2.5 overflow-hidden p-4 pb-24">
-      {/* Brand row — app-icon slot (added later) + wordmark. */}
-      <div className="flex shrink-0 items-center gap-2 pt-1">
-        <div
-          className="h-9 w-9 rounded-[10px] border border-[var(--hairline)] bg-[var(--surface-2)]"
-          aria-hidden
-        />
-        <span className="font-display text-xl font-extrabold tracking-tight">Dislexi</span>
-      </div>
-
-      <header className="relative shrink-0">
-        <LottieBadge
-          src="/lottie/pointer-bounce.json"
-          className="pointer-events-none absolute -top-1 right-0 h-14 w-14"
-        />
-        <h1 className="font-display max-w-[15ch] text-[26px] font-extrabold leading-[1.1] tracking-tight">
-          Homework that <span className="swipe">reads itself</span>.
-        </h1>
+    <main className="home-shell mx-auto min-h-dvh w-full max-w-6xl px-4 pb-28 pt-4 sm:px-6 lg:px-8 lg:pt-6">
+      <header className="mb-4 flex items-center justify-between gap-3">
+        <div className="flex min-w-0 items-center gap-3">
+          <BrandMark />
+          <div className="min-w-0">
+            <h1 className="font-display truncate text-xl font-extrabold tracking-tight sm:text-2xl">
+              Dislexi
+            </h1>
+            <p className="paper-kicker">Learning notebook</p>
+          </div>
+        </div>
+        <div className="paper-chip shrink-0">
+          <CalendarDays size={15} aria-hidden />
+          <span>Last 7 days</span>
+        </div>
       </header>
 
-      {/* Signature karaoke demo. */}
-      <div className="card shrink-0 px-3 py-2" aria-hidden>
-        <span className="mono-hint mb-0.5 block uppercase tracking-[0.1em]">live · synced to the voice</span>
-        <p className="text-[15px] font-medium leading-relaxed">
-          {KARAOKE_WORDS.map((w, i) => (
-            <span key={i}>
-              <span
-                className={`rounded-[3px] px-[3px] py-px transition-colors duration-150 ${
-                  i === lit ? "bg-[var(--hl)]" : ""
-                }`}
-              >
-                {w}
-              </span>{" "}
+      <section className="paper-card home-readalong relative mb-4 overflow-hidden p-4 sm:p-5">
+        <div className="relative z-10 max-w-[78%] sm:max-w-none">
+          <div className="mb-2 flex items-center gap-2">
+            <span className="paper-icon paper-icon-coral">
+              <Sparkles size={16} aria-hidden />
             </span>
-          ))}
-        </p>
-      </div>
+            <span className="paper-kicker">Live read-along</span>
+          </div>
+          <p
+            className="font-display text-lg font-bold leading-relaxed sm:text-xl"
+            aria-label={KARAOKE_WORDS.join(" ")}
+          >
+            {KARAOKE_WORDS.map((word, index) => (
+              <span key={`${word}-${index}`}>
+                <span className={index === lit ? "karaoke-word-active" : "karaoke-word"}>
+                  {word}
+                </span>{" "}
+              </span>
+            ))}
+          </p>
+        </div>
+        <LottieBadge
+          src="/lottie/pointer-bounce.json"
+          className="pointer-events-none absolute -bottom-1 right-1 h-20 w-20 sm:right-4 sm:h-24 sm:w-24"
+        />
+      </section>
 
-      {/* Practice summary fills the screen in place of the mode buttons. */}
       <PracticeSummary />
-
-      <footer className="shrink-0 border-t border-[var(--hairline)] pt-1.5">
-        <span className="mono-hint">3 features · 1 phone · 0 extra computers</span>
-      </footer>
     </main>
   );
 }

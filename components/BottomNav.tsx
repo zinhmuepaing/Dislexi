@@ -12,7 +12,17 @@
 import { useState } from "react";
 import Link from "next/link";
 import { usePathname, useRouter } from "next/navigation";
-import { Home, BarChart3, Settings, ScanLine, BookOpenText, GraduationCap, SpellCheck2, X } from "lucide-react";
+import {
+  Home,
+  BarChart3,
+  Settings,
+  ScanLine,
+  BookOpenText,
+  GraduationCap,
+  SpellCheck2,
+  CircleHelp,
+  X,
+} from "lucide-react";
 
 const TOOL_ROUTES = ["/exam-prep", "/tutoring", "/autopsy"];
 
@@ -99,13 +109,15 @@ export function BottomNav() {
         {tab("/insights", "Insights", BarChart3)}
         <button
           onClick={() => setSheet(true)}
-          className="press -mt-6 flex flex-1 flex-col items-center"
+          className="press -mt-6 flex flex-1 flex-col items-center gap-0.5 py-1"
           aria-label="Start a session"
         >
           <span className="flex h-14 w-14 items-center justify-center rounded-full bg-[var(--point)] shadow-[0_8px_20px_-6px_rgba(236,77,37,0.7)]">
             <ScanLine size={26} color="#fff" strokeWidth={2.2} />
           </span>
+          <span className="text-[10px] font-medium text-[var(--point)]">Scan</span>
         </button>
+        {tab("/guide", "Guide", CircleHelp)}
         {tab("/settings", "Settings", Settings)}
       </nav>
     </>

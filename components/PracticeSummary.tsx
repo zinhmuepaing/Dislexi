@@ -1,29 +1,31 @@
 "use client";
 
 /**
- * Home-page practice summary — a compact, cross-session snapshot for the last
- * 7 days that replaces the (redundant) mode buttons. Headline stat tiles plus
- * one "most-requested words" mini chart, with a link to the full insights view.
- *
- * Data comes from POST /api/review with { statsOnly: true } — the same
- * server-side aggregation as the Telegram review, but WITHOUT the LLM summary
- * or Telegram push (fast + free to run on every home load). Everything shown
- * is a struggle & engagement INDICATOR derived from typed events only.
+ * Home-page practice summary — a responsive visual snapshot for the last
+ * seven days. It keeps the existing data path but presents it as pastel paper
+ * tiles, an HTML bar chart, and compact progress notes.
  */
 
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useState } from "react";
 import Link from "next/link";
-import Chart from "chart.js/auto";
-import { BookOpenText, RotateCcw, Puzzle, MessageCircleQuestion, type LucideIcon } from "lucide-react";
+import {
+  ArrowRight,
+  BookOpenText,
+  Gauge,
+  MessageCircleQuestion,
+  Puzzle,
+  RotateCcw,
+  Target,
+  type LucideIcon,
+} from "lucide-react";
 import type { SessionStats } from "@/lib/analytics";
 
 const DAYS = 7;
 
 /**
- * Local UI development only: set NEXT_PUBLIC_MOCK_STATS=1 in .env.local to skip
- * the /api/review fetch and render sample data, so the populated layout is
- * visible without Supabase configured. Defaults off — never affects production
- * unless the flag is explicitly set there.
+ * Local UI development only: set NEXT_PUBLIC_MOCK_STATS=1 in .env.local to
+ * render the populated layout without Supabase. Production remains real-data
+ * only unless the flag is deliberately set there.
  */
 const MOCK_STATS = process.env.NEXT_PUBLIC_MOCK_STATS === "1";
 const SAMPLE_STATS: SessionStats = {
@@ -45,40 +47,41 @@ const SAMPLE_STATS: SessionStats = {
   quiz: null,
 };
 
-/** Event types worth surfacing as headline tiles, in display order. */
 const TILE_DEFS = [
-  { key: "read", label: "Words read", Icon: BookOpenText, accent: "var(--point)" },
-  { key: "reread", label: "Re-reads", Icon: RotateCcw, accent: "var(--hl-strong)" },
-  { key: "stuck_word", label: "Tricky words", Icon: Puzzle, accent: "var(--ok)" },
-  { key: "tutor_question", label: "Questions", Icon: MessageCircleQuestion, accent: "var(--ai)" },
+  { key: "read", label: "Words read", Icon: BookOpenText, tone: "coral" },
+  { key: "reread", label: "Re-reads", Icon: RotateCcw, tone: "yellow" },
+  { key: "stuck_word", label: "Tricky words", Icon: Puzzle, tone: "green" },
+  {
+    key: "tutor_question",
+    label: "Questions",
+    Icon: MessageCircleQuestion,
+    tone: "purple",
+  },
 ] as const;
 
 interface Tile {
   label: string;
   value: number;
   Icon: LucideIcon;
-  accent: string;
+  tone: "coral" | "yellow" | "green" | "purple";
 }
 
 export function PracticeSummary() {
   const [stats, setStats] = useState<SessionStats | null>(MOCK_STATS ? SAMPLE_STATS : null);
   const [failed, setFailed] = useState(false);
-  const canvasRef = useRef<HTMLCanvasElement | null>(null);
-  const chartRef = useRef<Chart | null>(null);
 
-  // Fetch the 7-day aggregate once on mount.
   useEffect(() => {
-    if (MOCK_STATS) return; // sample data already seeded into initial state
+    if (MOCK_STATS) return;
     let cancelled = false;
     fetch("/api/review", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ days: DAYS, statsOnly: true }),
     })
-      .then(async (r) => {
-        if (!r.ok) throw new Error(`review ${r.status}`);
-        const { stats } = (await r.json()) as { stats: SessionStats };
-        if (!cancelled) setStats(stats);
+      .then(async (response) => {
+        if (!response.ok) throw new Error(`review ${response.status}`);
+        const { stats: loadedStats } = (await response.json()) as { stats: SessionStats };
+        if (!cancelled) setStats(loadedStats);
       })
       .catch(() => {
         if (!cancelled) setFailed(true);
@@ -88,131 +91,172 @@ export function PracticeSummary() {
     };
   }, []);
 
-  // Draw the "most-requested words" mini chart once stats arrive.
   const topWords = stats?.topWords.slice(0, 5) ?? [];
-  useEffect(() => {
-    const canvas = canvasRef.current;
-    if (!canvas || topWords.length === 0) return;
-    chartRef.current = new Chart(canvas, {
-      type: "bar",
-      data: {
-        labels: topWords.map((w) => w.word),
-        datasets: [
-          {
-            label: "requests",
-            data: topWords.map((w) => w.count),
-            backgroundColor: "#2f9e63", // --ok, matches the stats-page words chart
-            borderRadius: 4,
-            maxBarThickness: 18,
-          },
-        ],
-      },
-      options: {
-        indexAxis: "y",
-        responsive: true,
-        maintainAspectRatio: false,
-        devicePixelRatio: 2,
-        plugins: { legend: { display: false } },
-        scales: {
-          x: { display: false, grid: { display: false }, beginAtZero: true },
-          y: { grid: { display: false }, ticks: { font: { size: 11 } } },
-        },
-      },
-    });
-    return () => {
-      chartRef.current?.destroy();
-      chartRef.current = null;
-    };
-    // topWords is derived from stats; redraw whenever the underlying data changes.
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [stats]);
 
-  // Loading skeleton (no data yet, no error).
   if (!stats && !failed) {
     return (
-      <section className="flex min-h-0 flex-1 flex-col gap-2.5" aria-label="Your practice">
-        <span className="mono-hint uppercase tracking-[0.1em]">your practice</span>
-        <div className="card flex-1 animate-pulse" aria-hidden />
-      </section>
-    );
-  }
-
-  // Empty state — no practice recorded, or the aggregate couldn't be loaded.
-  if (failed || !stats || stats.totalEvents === 0) {
-    return (
-      <section className="flex min-h-0 flex-1 flex-col gap-2.5" aria-label="Your practice">
-        <span className="mono-hint uppercase tracking-[0.1em]">your practice · last {DAYS} days</span>
-        <div className="card flex flex-1 flex-col items-center justify-center gap-1 p-5 text-center">
-          <p className="font-display text-base font-extrabold">No practice yet this week</p>
-          <p className="text-[13px] leading-snug text-[var(--ink-soft)]">
-            Tap <span className="font-semibold text-[var(--ink)]">Scan</span> below to read a
-            worksheet — your progress shows up here.
-          </p>
+      <section aria-label="Your practice" aria-busy="true">
+        <div className="mb-2 h-4 w-32 animate-pulse rounded bg-[var(--line)]" />
+        <div className="grid grid-cols-2 gap-3 lg:grid-cols-4">
+          {[0, 1, 2, 3].map((item) => (
+            <div
+              key={item}
+              className="paper-card h-32 animate-pulse bg-[var(--paper-card)]"
+              aria-hidden
+            />
+          ))}
         </div>
       </section>
     );
   }
 
-  // Tiles: only event types that actually happened; fall back to a total.
-  const tiles: Tile[] = TILE_DEFS.map((d) => ({
-    label: d.label,
-    value: stats.countsByType[d.key] ?? 0,
-    Icon: d.Icon,
-    accent: d.accent,
-  })).filter((t) => t.value > 0);
+  if (failed || !stats || stats.totalEvents === 0) {
+    return (
+      <section aria-label="Your practice">
+        <div className="mb-3 flex items-center justify-between">
+          <h2 className="paper-section-title">Your practice</h2>
+          <span className="paper-kicker">Last {DAYS} days</span>
+        </div>
+        <div className="paper-card flex min-h-64 flex-col items-center justify-center gap-3 p-6 text-center">
+          <span className="paper-illustration">
+            <BookOpenText size={42} aria-hidden />
+          </span>
+          <div>
+            <p className="font-display text-lg font-extrabold">A fresh page</p>
+            <p className="mt-1 max-w-xs text-sm text-[var(--muted-ink)]">
+              Start from Scan. Your practice will take shape here.
+            </p>
+          </div>
+        </div>
+      </section>
+    );
+  }
+
+  const tiles: Tile[] = TILE_DEFS.map((definition) => ({
+    label: definition.label,
+    value: stats.countsByType[definition.key] ?? 0,
+    Icon: definition.Icon,
+    tone: definition.tone,
+  })).filter((tile) => tile.value > 0);
+
   if (tiles.length === 0) {
     tiles.push({
       label: "Practice events",
       value: stats.totalEvents,
       Icon: BookOpenText,
-      accent: "var(--point)",
+      tone: "coral",
     });
   }
 
-  return (
-    <section className="flex min-h-0 flex-1 flex-col gap-2.5 overflow-y-auto" aria-label="Your practice">
-      <span className="mono-hint uppercase tracking-[0.1em]">your practice · last {DAYS} days</span>
+  const readCount = stats.countsByType.read ?? 0;
+  const nextCheckpoint = Math.max(50, Math.ceil((readCount + 1) / 50) * 50);
+  const checkpointProgress = Math.min(100, Math.round((readCount / nextCheckpoint) * 100));
+  const maxWordCount = Math.max(...topWords.map((word) => word.count), 1);
 
-      <div className="grid grid-cols-2 gap-2.5">
-        {tiles.map((t) => (
-          <div
-            key={t.label}
-            className="card relative flex flex-col gap-1 overflow-hidden py-2.5 pl-4 pr-3"
-            style={{ background: `color-mix(in srgb, ${t.accent} 9%, var(--card))` }}
-          >
-            <span
-              className="absolute inset-y-0 left-0 w-1.5"
-              style={{ background: t.accent }}
-              aria-hidden
-            />
-            <span
-              className="flex h-8 w-8 items-center justify-center rounded-xl"
-              style={{ background: `color-mix(in srgb, ${t.accent} 18%, white)` }}
-              aria-hidden
-            >
-              <t.Icon size={17} color={t.accent} />
+  return (
+    <section aria-label="Your practice">
+      <div className="mb-3 flex items-center justify-between gap-3">
+        <div>
+          <p className="paper-kicker">Dashboard</p>
+          <h2 className="paper-section-title">Your practice</h2>
+        </div>
+        <Link href="/insights" className="paper-link">
+          Full insights <ArrowRight size={14} aria-hidden />
+        </Link>
+      </div>
+
+      <div className="grid grid-cols-2 gap-3 lg:grid-cols-4">
+        {tiles.map((tile) => (
+          <article key={tile.label} className={`metric-card metric-${tile.tone}`}>
+            <span className="metric-icon" aria-hidden>
+              <tile.Icon size={18} strokeWidth={2.1} />
             </span>
-            <div className="font-display mt-0.5 text-2xl font-extrabold leading-none">{t.value}</div>
-            <div className="mono-hint">{t.label}</div>
-          </div>
+            <strong className="font-display mt-3 text-3xl font-extrabold leading-none">
+              {tile.value}
+            </strong>
+            <span className="paper-kicker mt-2">{tile.label}</span>
+          </article>
         ))}
       </div>
 
-      {topWords.length > 0 && (
-        <div className="card flex min-h-0 flex-1 flex-col px-3 py-2.5">
-          <span className="mono-hint mb-1 block uppercase tracking-[0.1em]">most-requested words</span>
-          <div className="min-h-[96px] flex-1">
-            <canvas ref={canvasRef} />
+      <div className="mt-3 grid gap-3 lg:grid-cols-[minmax(0,1.7fr)_minmax(240px,0.8fr)]">
+        <article className="paper-card p-4 sm:p-5">
+          <div className="mb-4 flex items-center justify-between">
+            <div>
+              <p className="paper-kicker">Word chart</p>
+              <h3 className="font-display text-base font-extrabold">Most-requested words</h3>
+            </div>
+            <Puzzle size={20} className="text-[var(--green-deep)]" aria-hidden />
           </div>
-        </div>
-      )}
 
-      <Link
-        href="/insights"
-        className="press mono-hint self-end text-[var(--point)] hover:underline"
-      >
-        View full insights →
-      </Link>
+          {topWords.length > 0 ? (
+            <div className="space-y-3">
+              {topWords.map((word) => (
+                <div key={word.word} className="word-chart-row">
+                  <span className="truncate text-sm font-medium">{word.word}</span>
+                  <div className="word-chart-track" aria-hidden>
+                    <span
+                      style={{
+                        width: `${Math.max(10, (word.count / maxWordCount) * 100)}%`,
+                      }}
+                    />
+                  </div>
+                  <strong className="font-mono text-xs">{word.count}</strong>
+                </div>
+              ))}
+            </div>
+          ) : (
+            <div className="flex min-h-36 items-center justify-center text-sm text-[var(--muted-ink)]">
+              No tricky words recorded
+            </div>
+          )}
+        </article>
+
+        <div className="grid grid-cols-2 gap-3 lg:grid-cols-1">
+          <article className="paper-card paper-note paper-note-yellow flex flex-col justify-between p-4">
+            <div className="flex items-center justify-between">
+              <span className="paper-icon paper-icon-yellow">
+                <Target size={18} aria-hidden />
+              </span>
+              <span className="paper-kicker">{checkpointProgress}%</span>
+            </div>
+            <div className="mt-5">
+              <p className="paper-kicker">Next checkpoint</p>
+              <p className="font-display mt-1 text-xl font-extrabold">
+                {readCount}{" "}
+                <span className="text-sm font-medium text-[var(--muted-ink)]">
+                  / {nextCheckpoint}
+                </span>
+              </p>
+              <div
+                className="paper-progress mt-3"
+                role="progressbar"
+                aria-label="Progress to next reading checkpoint"
+                aria-valuemin={0}
+                aria-valuemax={nextCheckpoint}
+                aria-valuenow={readCount}
+              >
+                <span style={{ width: `${checkpointProgress}%` }} />
+              </div>
+            </div>
+          </article>
+
+          <article className="paper-card paper-note paper-note-purple flex flex-col justify-between p-4">
+            <span className="paper-icon paper-icon-purple">
+              <Gauge size={18} aria-hidden />
+            </span>
+            <div className="mt-5">
+              <p className="paper-kicker">Practice rhythm</p>
+              <p className="font-display mt-1 text-xl font-extrabold">
+                {stats.medianGapSeconds === null ? "—" : `${stats.medianGapSeconds}s`}
+              </p>
+              <p className="mt-1 text-xs text-[var(--muted-ink)]">
+                Typical gap between actions
+              </p>
+            </div>
+          </article>
+        </div>
+      </div>
     </section>
   );
 }
