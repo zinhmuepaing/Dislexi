@@ -193,7 +193,9 @@ export function PracticeSummary() {
             <div className="space-y-3">
               {topWords.map((word) => (
                 <div key={word.word} className="word-chart-row">
-                  <span className="truncate text-sm font-medium">{word.word}</span>
+                  <span className="word-chart-label text-sm font-medium" title={word.word}>
+                    {word.word}
+                  </span>
                   <div className="word-chart-track" aria-hidden>
                     <span
                       style={{

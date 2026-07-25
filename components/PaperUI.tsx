@@ -62,7 +62,7 @@ export function PageHeader({
         <PaperIcon icon={icon} tone={tone} className="h-12 w-12 shrink-0" size={23} />
         <div className="min-w-0">
           <p className="paper-kicker">{eyebrow}</p>
-          <h1 className="font-display truncate text-2xl font-extrabold tracking-tight sm:text-3xl">
+          <h1 className="font-display break-words text-2xl font-extrabold tracking-tight sm:text-3xl">
             {title}
           </h1>
           {subtitle && <p className="mt-1 text-sm text-[var(--muted-ink)]">{subtitle}</p>}

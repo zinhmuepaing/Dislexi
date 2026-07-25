@@ -431,9 +431,15 @@ body::before {
 
 .word-chart-row {
   display: grid;
-  grid-template-columns: minmax(72px, 0.72fr) minmax(100px, 2fr) 24px;
+  grid-template-columns: minmax(96px, 0.9fr) minmax(80px, 1.6fr) 24px;
   align-items: center;
   gap: 10px;
+}
+
+.word-chart-label {
+  min-width: 0;
+  line-height: 1.35;
+  overflow-wrap: anywhere;
 }
 
 .word-chart-track {
@@ -483,6 +489,24 @@ body::before {
   border-right: 1px solid var(--ink);
   border-radius: inherit;
   background: var(--green);
+}
+
+@media (max-width: 420px) {
+  .word-chart-row {
+    grid-template-columns: minmax(0, 1fr) 24px;
+    gap: 6px 10px;
+  }
+
+  .word-chart-row > strong {
+    grid-column: 2;
+    grid-row: 1;
+    justify-self: end;
+  }
+
+  .word-chart-track {
+    grid-column: 1 / -1;
+    grid-row: 2;
+  }
 }
 
 .paper-illustration {

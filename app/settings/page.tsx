@@ -112,7 +112,7 @@ export default function SettingsPage() {
                   </span>
                   <span className="mt-3 block text-sm font-semibold">{font.label}</span>
                   <span
-                    className={`mt-1 block truncate text-xs text-[var(--muted-ink)] ${font.previewClass}`}
+                    className={`mt-1 block break-words text-xs text-[var(--muted-ink)] ${font.previewClass}`}
                   >
                     Find the perimeter
                   </span>
