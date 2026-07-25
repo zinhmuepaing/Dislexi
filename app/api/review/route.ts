@@ -40,7 +40,7 @@ function range(body: { days?: unknown; date?: unknown }): { start: string; end: 
 }
 
 export async function POST(req: NextRequest) {
-  let body: { days?: unknown; date?: unknown; send?: unknown };
+  let body: { days?: unknown; date?: unknown; send?: unknown; statsOnly?: unknown };
   try {
     body = await req.json();
   } catch {
@@ -64,6 +64,11 @@ export async function POST(req: NextRequest) {
   const stats: SessionStats = computeStats((events ?? []) as EventRow[]);
   if (!events || events.length === 0) {
     return NextResponse.json({ label, summary: `No practice recorded for ${label}.`, stats });
+  }
+
+  // Home-page practice widget: aggregate only, no LLM summary or Telegram push.
+  if (body.statsOnly === true) {
+    return NextResponse.json({ label, stats });
   }
 
   let summary: string;

@@ -2,43 +2,16 @@
 
 /**
  * Home — hybrid iOS look on the paper base. Brand row (app-icon slot +
- * "Dislexi" wordmark), a signature karaoke demo, and three feature cards
- * that grow to fill the screen. Lucide icons, no emojis.
+ * "Dislexi" wordmark), a signature karaoke demo, and a 7-day practice summary.
+ * The three modes are reached from the Scan button in the bottom nav, so the
+ * home page shows progress rather than duplicating those entry points.
  */
 
 import { useEffect, useState } from "react";
-import Link from "next/link";
-import { Hand, GraduationCap, SpellCheck2, ChevronRight } from "lucide-react";
 import { LottieBadge } from "@/components/LottieBadge";
+import { PracticeSummary } from "@/components/PracticeSummary";
 
 const KARAOKE_WORDS = "Find the perimeter of the rectangle below.".split(" ");
-
-const FEATURES = [
-  {
-    href: "/exam-prep",
-    title: "Exam-Prep",
-    tag: "Point at a line — it’s read out loud, word for word.",
-    stamp: { cls: "stamp-det", label: "Reads verbatim" },
-    accent: "var(--point)",
-    Icon: Hand,
-  },
-  {
-    href: "/tutoring",
-    title: "AI Tutoring",
-    tag: "Ask anything — the working appears on the paper.",
-    stamp: { cls: "stamp-ai", label: "AI explains" },
-    accent: "var(--ai)",
-    Icon: GraduationCap,
-  },
-  {
-    href: "/autopsy",
-    title: "Stuck-Word Autopsy",
-    tag: "Sound out a tricky word, then quiz yourself.",
-    stamp: { cls: "stamp-det", label: "Zero AI voice" },
-    accent: "var(--ok)",
-    Icon: SpellCheck2,
-  },
-];
 
 export default function ModeSelector() {
   const [lit, setLit] = useState(0);
@@ -88,39 +61,8 @@ export default function ModeSelector() {
         </p>
       </div>
 
-      {/* Feature cards grow to fill the screen. */}
-      <nav className="flex min-h-0 flex-1 flex-col gap-2.5" aria-label="Features">
-        {FEATURES.map((f, i) => (
-          <Link
-            key={f.href}
-            href={f.href}
-            style={{ animationDelay: `${i * 90}ms` }}
-            className="card press fadein group relative flex flex-1 flex-col justify-center overflow-hidden p-3.5 pl-5"
-          >
-            <span className="absolute inset-y-0 left-0 w-2" style={{ background: f.accent }} aria-hidden />
-            <div className="flex items-center gap-3">
-              <span
-                className="flex h-11 w-11 shrink-0 items-center justify-center rounded-2xl"
-                style={{ background: `color-mix(in srgb, ${f.accent} 14%, white)` }}
-                aria-hidden
-              >
-                <f.Icon size={22} color={f.accent} />
-              </span>
-              <div className="min-w-0">
-                <h2 className="font-display text-lg font-extrabold leading-tight">{f.title}</h2>
-                <p className="mt-0.5 text-[13px] leading-snug text-[var(--ink-soft)]">{f.tag}</p>
-              </div>
-              <ChevronRight
-                size={20}
-                className="ml-auto self-start transition-transform duration-150 group-hover:translate-x-0.5"
-                color={f.accent}
-                aria-hidden
-              />
-            </div>
-            <span className={`stamp ${f.stamp.cls} mt-2 self-start`}>{f.stamp.label}</span>
-          </Link>
-        ))}
-      </nav>
+      {/* Practice summary fills the screen in place of the mode buttons. */}
+      <PracticeSummary />
 
       <footer className="shrink-0 border-t border-[var(--hairline)] pt-1.5">
         <span className="mono-hint">3 features · 1 phone · 0 extra computers</span>
