@@ -18,9 +18,16 @@
 
 import { useEffect, useRef, useState } from "react";
 import Link from "next/link";
-import { ChevronLeft, Mic, MicOff, Send, Camera, Eye, EyeOff } from "lucide-react";
+import { ChevronLeft, ChevronRight, Mic, MicOff, Send, Camera, Eye, EyeOff } from "lucide-react";
 import { CameraStage, CameraStageHandle, CapturedFrame } from "@/components/CameraStage";
 import { FormulaCard } from "@/components/FormulaCard";
+import { VisualCard } from "@/components/VisualCard";
+import {
+  EXPLORE_MAX_MS,
+  isInteractiveVisual,
+  startVisualHold,
+  type TutorVisual,
+} from "@/lib/tutor-visual";
 import { speak, stopSpeaking, announce, primeSpeech, synthesizeSpeech } from "@/lib/speech";
 import { installAudioUnlock } from "@/lib/audio";
 import { SessionLogger } from "@/lib/event-queue";
@@ -45,6 +52,9 @@ interface TutorStep {
   region: TutorRegion;
   aids?: TutorAid[];
   formula?: string;
+  /** Generated countable/animated visual (backlog §1/§3/§4); already validated
+   *  server-side by parseVisual, so the client can render it as-is. */
+  visual?: TutorVisual;
 }
 
 interface TutorLine {
@@ -201,6 +211,9 @@ export default function TutoringPage() {
   const [frame, setFrame] = useState<CapturedFrame | null>(null);
   const [steps, setSteps] = useState<TutorStep[]>([]);
   const [activeStep, setActiveStep] = useState(-1);
+  /** True while a draggable visual has the floor and narration is waiting. */
+  const [awaitingContinue, setAwaitingContinue] = useState(false);
+  const continueRef = useRef<(() => void) | null>(null);
   const [busy, setBusy] = useState(false);
   const [thinkingLine, setThinkingLine] = useState(0);
   const [errorMsg, setErrorMsg] = useState<string | null>(null);
@@ -292,6 +305,32 @@ export default function TutoringPage() {
    * (prefetching i+1 for near-gapless playback), reveal its formula/marks at
    * audio start, advance. Cancelled by bumping narrationRun.
    */
+  /** Release any pending explore wait — used by Next, and by anything that
+   *  cancels narration (new question, retake, tapping a transcript step). */
+  function releaseContinue() {
+    continueRef.current?.();
+    continueRef.current = null;
+  }
+
+  /** Resolves when the student taps Next, or after EXPLORE_MAX_MS so an
+   *  unattended session never stalls forever. */
+  function waitForContinue(): Promise<void> {
+    return new Promise<void>((resolve) => {
+      let settled = false;
+      const finish = () => {
+        if (settled) return;
+        settled = true;
+        clearTimeout(timer);
+        continueRef.current = null;
+        setAwaitingContinue(false);
+        resolve();
+      };
+      const timer = setTimeout(finish, EXPLORE_MAX_MS);
+      continueRef.current = finish;
+      setAwaitingContinue(true);
+    });
+  }
+
   async function runNarration(run: number) {
     narratingRef.current = true;
     let i = 0;
@@ -307,6 +346,7 @@ export default function TutoringPage() {
       if (next) void synthesizeSpeech(next.say).catch(() => {}); // prefetch next
       await ready;
       if (narrationRun.current !== run) return;
+      const hold = startVisualHold(); // clock starts as the visual is revealed
       setActiveStep(i); // reveal formula + marks in sync with audio start
       try {
         await speak(step.say); // cache hit → plays immediately
@@ -314,6 +354,26 @@ export default function TutoringPage() {
         /* keep advancing on TTS failure */
       }
       if (narrationRun.current !== run) return;
+
+      // A visual is an activity, not a glance: give it the time its kind needs
+      // before moving on. Only the step that INTRODUCES a visual holds —
+      // later steps narrate over it normally (it stays up, see stickyVisual).
+      if (step.visual) {
+        if (isInteractiveVisual(step.visual)) {
+          // The student's turn. Go quiet and invite them rather than talking
+          // over someone who is meant to be experimenting.
+          try {
+            await speak("Your turn. Drag the dot and watch the number change.");
+          } catch {
+            /* the button is on screen regardless */
+          }
+          if (narrationRun.current !== run) return;
+          await waitForContinue();
+        } else {
+          await hold(step.visual);
+        }
+        if (narrationRun.current !== run) return;
+      }
       i += 1;
     }
     if (narrationRun.current === run) narratingRef.current = false;
@@ -327,6 +387,7 @@ export default function TutoringPage() {
     if (!captured) return;
     stopSpeaking();
     const run = ++narrationRun.current; // cancel any prior narration
+    releaseContinue();
     stepsRef.current = [];
     streamDoneRef.current = false;
     frameRef.current = captured;
@@ -416,6 +477,7 @@ export default function TutoringPage() {
   function retake() {
     stopSpeaking();
     narrationRun.current += 1; // cancel narration
+    releaseContinue();
     narratingRef.current = false;
     stepsRef.current = [];
     streamDoneRef.current = false;
@@ -431,9 +493,25 @@ export default function TutoringPage() {
 
   const active = activeStep >= 0 ? steps[activeStep] : null;
 
+  /**
+   * Sticky visual: the most recent visual at or before the active step, so it
+   * stays up while later steps narrate over it and only changes when a step
+   * supplies a different one. Keyed by the index that INTRODUCED it — keying by
+   * activeStep would remount on every step, restarting the animation and
+   * throwing away the angle the student had dragged to.
+   */
+  const stickyVisual = (() => {
+    for (let k = activeStep; k >= 0; k--) {
+      const v = steps[k]?.visual;
+      if (v) return { visual: v, key: k };
+    }
+    return null;
+  })();
+
   // Manual tap on a step in the transcript — takes over from auto-narration.
   const playStep = (i: number) => {
     narrationRun.current += 1; // stop the streaming narration loop
+    releaseContinue(); // never leave the explore wait (and its button) hanging
     stopSpeaking();
     narratingRef.current = true;
     setActiveStep(i);
@@ -447,11 +525,29 @@ export default function TutoringPage() {
   return (
     <main className="fixed inset-0 bg-[var(--ink)]">
       <CameraStage ref={stage} fullBleed>
-        {active && <AidsOverlay region={active.region} aids={active.aids ?? []} />}
-        {/* One formula card at a time — keyed by step so it unmounts cleanly
-            before the next step's appears (REWORK 4). */}
-        {active?.formula && (
+        {/* Aids point at the paper; hide them while a visual covers it, or the
+            student is directed at something they cannot see. */}
+        {active && !stickyVisual && (
+          <AidsOverlay region={active.region} aids={active.aids ?? []} />
+        )}
+        {/* The visual persists across later steps (keyed by the step that
+            introduced it, so it does not remount and lose its state). The
+            one-at-a-time rule still governs FORMULA cards — those are a glance
+            and must not stack — but a visual may be narrated over for several
+            steps while highlighting and pointing carry the rest. */}
+        {stickyVisual && <VisualCard key={`v${stickyVisual.key}`} visual={stickyVisual.visual} />}
+        {!stickyVisual && active?.formula && (
           <FormulaCard key={activeStep} formula={active.formula} region={active.region} />
+        )}
+        {/* Explore mode: the tutor has gone quiet and handed over. The button
+            is the way back, so it sits clear of the panel and is unmissable. */}
+        {awaitingContinue && (
+          <button
+            onClick={releaseContinue}
+            className="btn-accent press pointer-events-auto absolute bottom-4 left-1/2 z-20 flex -translate-x-1/2 items-center gap-1.5 px-5 py-2.5 text-sm font-semibold"
+          >
+            Next <ChevronRight size={17} />
+          </button>
         )}
       </CameraStage>
 

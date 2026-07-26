@@ -34,6 +34,7 @@ import { SessionLogger } from "@/lib/event-queue";
 import { coachingLines } from "@/lib/syllables";
 import { saidWordMatches } from "@/lib/text-match";
 import { resolveVoiceCommand } from "@/lib/voice-commands";
+import { attemptPointing } from "@/lib/quiz-point";
 import { startVoiceListener, VoiceListener } from "@/lib/stt";
 import { LottieBadge } from "@/components/LottieBadge";
 import { ChevronLeft, Mic, MicOff, RotateCw, Square, Hand, Volume2, BookOpen, Sparkles, Play, Check } from "lucide-react";
@@ -66,6 +67,17 @@ interface QuizState {
 
 const SCAN_SETTLE_MS = 900;
 const QUIZ_SAY_MS = 10_000;
+
+/* Quiz pointing step (backlog §5). locateWord() is TWO vision round trips, so
+ * attempts are few and deliberately spaced — a tight poll would burn calls
+ * without giving the student time to move. */
+const QUIZ_POINT_ATTEMPTS = 3;
+/** Pause after the spoken prompt, before the first look — hand travel time. */
+const QUIZ_POINT_SETTLE_MS = 1200;
+/** Pause after a retry cue, before looking again. */
+const QUIZ_RETRY_SETTLE_MS = 900;
+/** Same vocabulary as pointAndAct's miss — one phrasing for one failure. */
+const QUIZ_RETRY_CUE = "I couldn't see your finger. Point at the word and hold still.";
 
 /** Split a block into word entries — real OCR word boxes when available. */
 function wordsOf(block: OcrBox, blockIndex: number, gen: number): WordEntry[] {
@@ -374,7 +386,7 @@ export default function AutopsyPage() {
       clearQuizTimers();
       const ok = saidWordMatches(text, target);
       if (ok) playChime();
-      continueAfterSay(ok);
+      void continueAfterSay(ok);
       return;
     }
     if (quizRef.current) return;
@@ -444,42 +456,121 @@ export default function AutopsyPage() {
     answerWindowRef.current = { target: item.text };
     quizTimer.current = setTimeout(() => {
       answerWindowRef.current = null;
-      continueAfterSay(false);
+      void continueAfterSay(false);
     }, QUIZ_SAY_MS);
   }
 
-  function continueAfterSay(said: boolean) {
+  /**
+   * True while the pointing step for THIS word is still the live one. Checked
+   * around every await: the retry loop spans several seconds of network time,
+   * and Skip/End/rescan must abort it rather than let it record a result for a
+   * word the quiz has already moved past.
+   */
+  function pointStageActive(index: number): boolean {
+    return quizRef.current?.stage === "point" && quizRef.current.index === index;
+  }
+
+  /**
+   * Single-flight guard for the pointing step. There are TWO entry points —
+   * the automatic run after the spoken prompt, and the student tapping "Check
+   * where I'm pointing". Before the retry loop existed a run was near-instant
+   * and overlap was unlikely; now a run spans several seconds of network time,
+   * so without this both could reach recordResult and advance the quiz twice.
+   * Whichever starts first wins; the other is a no-op.
+   */
+  const pointRunRef = useRef(false);
+
+  const pause = (ms: number) => new Promise<void>((r) => setTimeout(r, ms));
+
+  async function continueAfterSay(said: boolean) {
     const q = quizRef.current;
     if (!q) return;
     setStuck(null); // stop revealing the word before the pointing step
     setQuizBoth({ stage: "point", index: q.index, results: q.results });
-    void speak(`Now point at the word ${practiceRef.current[q.index]?.text}.`).catch(() => {});
-    void checkPointResult(said);
+    const word = practiceRef.current[q.index]?.text;
+    try {
+      // AWAIT: the finger check used to start while this was still playing, so
+      // the student was measured before they had heard what to point at.
+      await speak(`Now point at the word ${word}.`);
+    } catch {
+      /* prompt is on screen too */
+    }
+    if (!pointStageActive(q.index)) return;
+    await checkPointResult(said);
   }
 
-  /** Capture → locate finger → did the child point at the target word? */
+  /**
+   * Prompt → settle → look. On a miss, cue and look again, bounded to
+   * QUIZ_POINT_ATTEMPTS. A miss is recorded honestly rather than swallowed.
+   */
   async function checkPointResult(said: boolean) {
     const q = quizRef.current;
     if (!q) return;
-    const item = practiceRef.current[q.index];
+    if (pointRunRef.current) return; // a run is already in flight (see above)
+    const index = q.index;
+    const item = practiceRef.current[index];
     const target = scanEntryFor(item);
     if (!target) {
-      recordResult(q.index, q.results, { word: item.text, said, pointed: null, skipped: false });
+      // Word isn't in the current scan at all — not the student's miss.
+      recordResult(index, q.results, { word: item.text, said, pointed: null, skipped: false });
       return;
     }
+
+    pointRunRef.current = true;
     setFinding(true);
-    setStatus("Finding your finger…");
-    let pointed = false;
     try {
-      const word = await locateWord();
-      pointed = !!word && normalizeWord(word.text) === normalizeWord(item.text);
-    } catch (err) {
-      console.error("quiz point failed:", err);
+      const { pointed, looked, aborted } = await attemptPointing<WordEntry>({
+        attempts: QUIZ_POINT_ATTEMPTS,
+        locate: locateWord,
+        matches: (w) => normalizeWord(w.text) === normalizeWord(item.text),
+        isActive: () => pointStageActive(index),
+        beforeAttempt: async (attempt) => {
+          if (attempt === 0) {
+            await pause(QUIZ_POINT_SETTLE_MS); // time to get the finger there
+          } else {
+            setStatus(QUIZ_RETRY_CUE);
+            try {
+              await speak(QUIZ_RETRY_CUE);
+            } catch {
+              /* status carries it */
+            }
+            if (!pointStageActive(index)) return;
+            await pause(QUIZ_RETRY_SETTLE_MS);
+          }
+          setStatus("Finding your finger…");
+        },
+      });
+
+      if (aborted || !pointStageActive(index)) return; // skipped/ended mid-flight
+      if (pointed) playChime();
+      else {
+        // Never silent: acknowledge, but do NOT reveal the word — showing it
+        // after a failed attempt would let waiting become a way to be told.
+        try {
+          await speak("Let's try the next one.");
+        } catch {
+          /* non-fatal */
+        }
+        if (!pointStageActive(index)) return;
+      }
+      recordResult(index, q.results, {
+        word: item.text,
+        said,
+        // `looked` false = every attempt threw, so we never actually saw the
+        // paper. Recording that as a student miss would be a lie; null means
+        // "not established", the same value used when the word isn't on screen.
+        pointed: looked ? pointed : null,
+        skipped: false,
+      });
+    } finally {
+      // Must release on every path (including the early returns above), or the
+      // Check button stays dead for the rest of the quiz.
+      pointRunRef.current = false;
+      setFinding(false);
+      // "Finding your finger…" is a transient state; leaving it up outlives
+      // the quiz and was still on screen at the results panel.
+      setStatus((s) => (s === "Finding your finger…" || s === QUIZ_RETRY_CUE ? "" : s));
     }
-    setFinding(false);
-    if (quizRef.current?.stage !== "point") return;
-    if (pointed) playChime();
-    recordResult(q.index, q.results, { word: item.text, said, pointed, skipped: false });
   }
 
   function recordResult(index: number, results: QuizResultItem[], item: QuizResultItem) {

@@ -26,6 +26,21 @@ import { fastParseCommand } from "../lib/voice-commands";
 import { syllablesOf, coachingLines } from "../lib/syllables";
 import { similarity, saidWordMatches, bestWordMatch } from "../lib/text-match";
 import { buildLineMarks, buildWordMarks } from "../lib/marks";
+import { attemptPointing } from "../lib/quiz-point";
+import {
+  isInteractiveVisual,
+  minOnScreenMs,
+  parseVisual,
+  ratioValue,
+  startVisualHold,
+  VISUAL_ANIM_DELAY_MS,
+  VISUAL_ANIM_MS,
+  type FoldTriangleSpec,
+  type PlaceValueSpec,
+  type RatioTriangleSpec,
+  type RearrangeParallelogramSpec,
+  type UnitGridSpec,
+} from "../lib/tutor-visual";
 
 const box = (l: number, t: number, r: number, b: number): [number, number][] => [
   [l, t],
@@ -171,6 +186,251 @@ const box = (l: number, t: number, r: number, b: number): [number, number][] => 
   assert.equal(chunkPattern(chunksFor("dog")), "d|o|g");
   assert.equal(normalizeWord("“Book,”"), "book");
   assert.deepEqual(chunksFor("123"), []);
+}
+
+// ── tutor visuals: closed vocabulary, clamped, unknown dropped (§1/§3/§4) ────
+{
+  // Unknown / malformed shapes must DROP to null, so a hallucinated visual
+  // degrades to a normal narrated step instead of rendering something broken.
+  assert.equal(parseVisual(null), null);
+  assert.equal(parseVisual("unitGrid"), null);
+  assert.equal(parseVisual({ kind: "spiralGalaxy" }), null);
+  assert.equal(parseVisual({ kind: "unitGrid" }), null); // no grids
+  assert.equal(parseVisual({ kind: "unitGrid", grids: [] }), null);
+  assert.equal(parseVisual({ kind: "placeValue", rows: [{ hundreds: 0, tens: 0, ones: 0 }] }), null);
+
+  // §1 Pythagoras by counting: 3x3 + 4x4 = 5x5.
+  const g = parseVisual({
+    kind: "unitGrid",
+    grids: [{ rows: 3, cols: 3 }, { rows: 4, cols: 4 }, { rows: 5, cols: 5 }],
+  }) as UnitGridSpec;
+  assert.equal(g.kind, "unitGrid");
+  assert.equal(g.grids.length, 3);
+  assert.deepEqual(g.grids.map((x) => x.rows * x.cols), [9, 16, 25]);
+  assert.equal(9 + 16, 25, "the visual must state a true fact");
+
+  // Bounds: at most 3 grids, each at most 12x12 — an uncountable grid defeats
+  // the whole point of a "concrete" visual.
+  const big = parseVisual({
+    kind: "unitGrid",
+    grids: [{ rows: 40, cols: 40 }, { rows: 2, cols: 2 }, { rows: 2, cols: 2 }, { rows: 2, cols: 2 }],
+  }) as UnitGridSpec;
+  assert.equal(big.grids.length, 3);
+  assert.deepEqual(big.grids[0], { rows: 12, cols: 12 });
+
+  // Garbage numerics fall back rather than producing NaN geometry.
+  assert.equal(parseVisual({ kind: "unitGrid", grids: [{ rows: "x", cols: 3 }] }), null);
+
+  const pv = parseVisual({
+    kind: "placeValue",
+    rows: [{ hundreds: 5, tens: 0, ones: 0 }, { hundreds: 8, tens: 0, ones: 0 }],
+  }) as PlaceValueSpec;
+  assert.equal(pv.rows.length, 2);
+  assert.equal(pv.rows[0].hundreds * 100 + pv.rows[1].hundreds * 100, 1300);
+
+  // §4 fold: proportions are carried through (the renderer scales by them).
+  const f = parseVisual({ kind: "foldTriangle", base: 10, height: 12 }) as FoldTriangleSpec;
+  assert.deepEqual([f.base, f.height], [10, 12]);
+
+  // §4 rearrange: a slant wider than the base would invert the shape mid-slide.
+  const rp = parseVisual({
+    kind: "rearrangeParallelogram", base: 10, height: 7, slant: 50,
+  }) as RearrangeParallelogramSpec;
+  assert.ok(rp.slant <= rp.base * 0.8, `slant ${rp.slant} must stay under the base`);
+
+  // §3 ratio triangle: angle clamped away from degenerate, ratio whitelisted.
+  const r1 = parseVisual({ kind: "ratioTriangle", angleDeg: 43, ratio: "sin", adjacent: 35 }) as RatioTriangleSpec;
+  assert.deepEqual([r1.angleDeg, r1.ratio, r1.adjacent], [43, "sin", 35]);
+  const r2 = parseVisual({ kind: "ratioTriangle", angleDeg: 0.4, ratio: "wat" }) as RatioTriangleSpec;
+  assert.equal(r2.angleDeg, 10, "sub-10° collapses to an invisible triangle");
+  assert.equal(r2.ratio, "sin", "unknown ratio falls back rather than rendering blank");
+  const r3 = parseVisual({ kind: "ratioTriangle", angleDeg: 179 }) as RatioTriangleSpec;
+  assert.equal(r3.angleDeg, 80);
+  assert.equal((parseVisual({ kind: "ratioTriangle", angleDeg: 40, adjacent: -5 }) as RatioTriangleSpec).adjacent, undefined);
+
+  // The ratio readout must be real trigonometry, not a lookup.
+  assert.ok(Math.abs(ratioValue("sin", 30) - 0.5) < 1e-9);
+  assert.ok(Math.abs(ratioValue("cos", 60) - 0.5) < 1e-9);
+  assert.ok(Math.abs(ratioValue("tan", 45) - 1) < 1e-9);
+
+  // End-to-end through the step mapper: a visual survives, junk does not.
+  const steps = parseSteps(
+    JSON.stringify({
+      steps: [
+        { say: "Count them.", region: { x: 0, y: 0, w: 1, h: 1 }, visual: { kind: "unitGrid", grids: [{ rows: 3, cols: 3 }] } },
+        { say: "Now the rule.", region: { x: 0, y: 0, w: 1, h: 1 }, formula: "a^2+b^2=c^2" },
+        { say: "Bad shape.", region: { x: 0, y: 0, w: 1, h: 1 }, visual: { kind: "nope" } },
+      ],
+    }),
+  );
+  assert.equal(steps.length, 3);
+  assert.equal(steps[0].visual?.kind, "unitGrid");
+  assert.equal(steps[1].visual, undefined);
+  assert.equal(steps[1].formula, "a^2+b^2=c^2");
+  assert.equal(steps[2].visual, undefined, "invalid visual must not reach the client");
+  assert.equal(steps[2].say, "Bad shape.", "…but the step itself still narrates");
+}
+
+// ── visual pacing: a visual is an activity, not a glance ────────────────────
+{
+  const grid = (n: number) => parseVisual({ kind: "unitGrid", grids: [{ rows: n, cols: n }] })!;
+  const pyth = parseVisual({
+    kind: "unitGrid", grids: [{ rows: 3, cols: 3 }, { rows: 4, cols: 4 }, { rows: 5, cols: 5 }],
+  })!;
+  const fold = parseVisual({ kind: "foldTriangle", base: 10, height: 12 })!;
+  const drag = parseVisual({ kind: "ratioTriangle", angleDeg: 43, ratio: "sin" })!;
+
+  // Only the draggable one hands control to the student.
+  assert.equal(isInteractiveVisual(drag), true);
+  assert.equal(isInteractiveVisual(fold), false);
+  assert.equal(isInteractiveVisual(pyth), false);
+
+  // More to count = more time. This is the whole point of the change.
+  assert.ok(minOnScreenMs(grid(6)) > minOnScreenMs(grid(2)),
+    "a 36-square grid must outlast a 4-square one");
+  assert.ok(minOnScreenMs(pyth) >= 6000, `50 squares needs real time, got ${minOnScreenMs(pyth)}`);
+
+  // The motion must be able to FINISH before anything moves on — the original
+  // bug was a ~3s window for a 1.85s animation with no time to absorb it.
+  assert.ok(minOnScreenMs(fold) > VISUAL_ANIM_DELAY_MS + VISUAL_ANIM_MS,
+    "the fold must outlast its own animation");
+
+  // Interactive visuals are not timed at all.
+  assert.equal(minOnScreenMs(drag), 0);
+
+  // Never absurd in either direction, whatever the model sends.
+  for (const v of [grid(1), grid(12), pyth, fold]) {
+    const ms = minOnScreenMs(v);
+    assert.ok(ms >= 2500 && ms <= 9000, `${v.kind} hold ${ms}ms out of range`);
+  }
+
+  // startVisualHold subtracts time already spent narrating, so a long sentence
+  // does not add its length on top of the hold.
+  let clock = 0;
+  const hold = startVisualHold(() => clock);
+  clock = 99_999; // narration ran far longer than the minimum
+  assert.equal(await hold(pyth), 0, "an over-long narration must not add extra wait");
+
+  let clock2 = 0;
+  const hold2 = startVisualHold(() => clock2);
+  clock2 = 500; // a very short sentence
+  const waited = await hold2(fold);
+  assert.ok(waited > 0 && waited <= minOnScreenMs(fold),
+    `a short sentence must be topped up, waited ${waited}`);
+}
+
+// ── quiz pointing: bounded retries, ordering, abort (backlog §5) ─────────────
+{
+  type W = { text: string };
+  const target = (w: W) => w.text === "awards";
+  // Records the exact interleaving of prompts and looks.
+  const trace: string[] = [];
+  const opts = (over: Partial<Parameters<typeof attemptPointing<W>>[0]>) => ({
+    attempts: 3,
+    locate: async () => null,
+    matches: target,
+    isActive: () => true,
+    beforeAttempt: async (a: number) => void trace.push(`before:${a}`),
+    ...over,
+  });
+
+  // The prompt/settle ALWAYS precedes its look — the actual §5 bug was these
+  // firing simultaneously, measuring the student before they had heard it.
+  trace.length = 0;
+  await attemptPointing<W>(
+    opts({
+      locate: async () => {
+        trace.push("look");
+        return null;
+      },
+    }),
+  );
+  assert.deepEqual(trace, ["before:0", "look", "before:1", "look", "before:2", "look"]);
+
+  // Hit on the first look → exactly one look, no retry cue.
+  let looks = 0;
+  let r = await attemptPointing<W>(
+    opts({
+      locate: async () => {
+        looks++;
+        return { text: "awards" };
+      },
+    }),
+  );
+  assert.deepEqual([r.pointed, r.looked, r.aborted, r.used], [true, true, false, 1]);
+  assert.equal(looks, 1, "must stop as soon as the student is right");
+
+  // Miss, miss, hit → succeeds on the third; retries are real, not decorative.
+  looks = 0;
+  r = await attemptPointing<W>(
+    opts({
+      locate: async () => (++looks < 3 ? { text: "other" } : { text: "awards" }),
+    }),
+  );
+  assert.deepEqual([r.pointed, r.used, r.aborted], [true, 3, false]);
+
+  // All misses → bounded at `attempts`, never unbounded, and honestly false.
+  looks = 0;
+  r = await attemptPointing<W>(
+    opts({
+      locate: async () => {
+        looks++;
+        return { text: "other" };
+      },
+    }),
+  );
+  assert.deepEqual([r.pointed, r.looked, r.aborted, r.used], [false, true, false, 3]);
+  assert.equal(looks, 3, "must not exceed the attempt bound");
+
+  // Abort BEFORE the first look (Skip during the prompt) → nothing looked at,
+  // aborted set so the caller records nothing.
+  r = await attemptPointing<W>(opts({ isActive: () => false }));
+  assert.deepEqual([r.aborted, r.looked, r.used], [true, false, 0]);
+
+  // Abort BETWEEN attempts → stops immediately; the caller must not record.
+  // The trace assertion is the load-bearing one: without an abort check AFTER
+  // the look, the loop still runs beforeAttempt(1) and the student hears "I
+  // couldn't see your finger" for a word the quiz has already moved past.
+  // (A pre-look check alone leaves that stale prompt in place, so asserting
+  // only on `aborted`/`used` passes even with the bug present.)
+  trace.length = 0;
+  looks = 0;
+  r = await attemptPointing<W>(
+    opts({
+      locate: async () => {
+        looks++;
+        trace.push("look");
+        return { text: "other" };
+      },
+      isActive: () => looks < 1, // goes false right after the first look
+    }),
+  );
+  assert.equal(r.aborted, true);
+  assert.equal(looks, 1, "aborting mid-run must not keep burning vision calls");
+  assert.deepEqual(trace, ["before:0", "look"], "no retry cue may play after an abort");
+
+  // A throwing look is not a student miss: `looked` stays false when EVERY
+  // attempt throws, so the caller can record null instead of a false failure.
+  r = await attemptPointing<W>(
+    opts({
+      locate: async () => {
+        throw new Error("network");
+      },
+    }),
+  );
+  assert.deepEqual([r.pointed, r.looked, r.aborted, r.used], [false, false, false, 3]);
+
+  // …but one good look after a throw still counts as having looked.
+  looks = 0;
+  r = await attemptPointing<W>(
+    opts({
+      locate: async () => {
+        if (++looks === 1) throw new Error("network");
+        return { text: "other" };
+      },
+    }),
+  );
+  assert.deepEqual([r.pointed, r.looked], [false, true]);
 }
 
 // ── computeStats: counts, rereads, top words, pacing ─────────────────────────

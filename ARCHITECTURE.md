@@ -216,7 +216,7 @@ Analytics (session-end and Telegram ranges) are SQL aggregates over `events`: co
 | Route | Method | In | Out |
 |---|---|---|---|
 | `/api/ocr` | POST | `{ imageBase64 }` | `{ blocks: [{ text, confidence, box: [[x,y]×4] }] }` |
-| `/api/tutor` | POST | `{ imageBase64, question, history?, lines? }` | **SSE stream** (incremental, REWORK 4): one `{step,index}` frame per step as it finishes generating (`step` = `{say,region,formula?,aids?}`), then `{done:true}`. Assistant-prefill `{"steps":[` cuts latency. |
+| `/api/tutor` | POST | `{ imageBase64, question, history?, lines? }` | **SSE stream** (incremental, REWORK 4): one `{step,index}` frame per step as it finishes generating (`step` = `{say,region,formula?,aids?,visual?}`), then `{done:true}`. Assistant-prefill `{"steps":[` cuts latency. `visual` is a validated spec from a closed vocabulary (`lib/tutor-visual.ts`) — the model never sends SVG or coordinates. |
 | `/api/azure-token` | GET | — | `{ token, region }` |
 | `/api/sessions` | POST | `{ mode }` | `{ sessionId }` |
 | `/api/events` | POST | `{ sessionId, events: [...] }` (batched every ~5 s and on end) | `{ ok: true }` |

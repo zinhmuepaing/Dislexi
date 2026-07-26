@@ -30,7 +30,7 @@ import {
   useRef,
   useState,
 } from "react";
-import { SwitchCamera, FlipHorizontal2 } from "lucide-react";
+import { SwitchCamera, FlipHorizontal2, ImageDown } from "lucide-react";
 
 /** §5.1: compress before upload — target ≤ ~1600px long side, JPEG q≈0.8. */
 const MAX_LONG_SIDE = 1600;
@@ -38,6 +38,20 @@ const JPEG_QUALITY = 0.8;
 
 const FACING_KEY = "dislexi.cameraFacing";
 const MIRROR_KEY = "dislexi.mirrorClip";
+const FIXTURE_KEY = "dislexi.testFixture";
+
+/**
+ * Local verification only: NEXT_PUBLIC_TEST_IMAGES=1 lets a static worksheet
+ * photo stand in for the live camera, so camera-dependent features can be
+ * verified without a phone (same opt-in shape as NEXT_PUBLIC_MOCK_STATS).
+ *
+ * The fixture is drawn to the SAME canvas the camera would fill, so §7 rule 1
+ * still holds — OCR, pointing and display keep sharing one coordinate space,
+ * and captureFrame()/getCanvas() are untouched. Switching fixtures at runtime
+ * is what makes a retry loop testable: a single still image would return the
+ * same answer on every attempt.
+ */
+const TEST_IMAGES = process.env.NEXT_PUBLIC_TEST_IMAGES === "1";
 
 type Facing = "user" | "environment";
 
@@ -101,9 +115,12 @@ export const CameraStage = forwardRef<CameraStageHandle, CameraStageProps>(
     const rafRef = useRef<number>(0);
     const frozenRef = useRef(false);
     const mirrorRef = useRef(false);
+    const imgRef = useRef<HTMLImageElement | null>(null);
     const [ready, setReady] = useState(false);
     const [facing, setFacing] = useState<Facing>("user");
     const [mirror, setMirror] = useState(false);
+    const [fixtures, setFixtures] = useState<string[]>([]);
+    const [fixture, setFixture] = useState<string | null>(null);
     // Displayed frame rect (px) inside the object-contain canvas — the overlay
     // layer is sized to this so %-coords track the visible frame in fullBleed.
     const [frameRect, setFrameRect] = useState<{ left: number; top: number; width: number; height: number } | null>(null);
@@ -141,27 +158,98 @@ export const CameraStage = forwardRef<CameraStageHandle, CameraStageProps>(
       mirrorRef.current = m;
     }, []);
 
-    // Draw the live video to the canvas — flipped ONLY in mirror-clip mode.
-    const drawLoop = useCallback(() => {
-      const video = videoRef.current;
+    // Paint the current source to the canvas — flipped ONLY in mirror-clip mode.
+    // The source is the live video, or a still fixture when the dev test path
+    // is active; step 0 and the canvas contract are identical either way.
+    const paint = useCallback(() => {
       const canvas = canvasRef.current;
-      if (video && canvas && !frozenRef.current && video.readyState >= 2) {
-        canvas.width = video.videoWidth;
-        canvas.height = video.videoHeight;
-        const ctx = canvas.getContext("2d")!;
-        if (mirrorRef.current) {
-          ctx.save();
-          ctx.scale(-1, 1); // STEP 0 — mirror-clip compensation
-          ctx.drawImage(video, -canvas.width, 0, canvas.width, canvas.height);
-          ctx.restore();
-        } else {
-          ctx.drawImage(video, 0, 0, canvas.width, canvas.height); // raw
-        }
+      const img = imgRef.current;
+      const video = videoRef.current;
+      const src: CanvasImageSource | null =
+        img ?? (video && video.readyState >= 2 ? video : null);
+      const w = img ? img.naturalWidth : (video?.videoWidth ?? 0);
+      const h = img ? img.naturalHeight : (video?.videoHeight ?? 0);
+      if (!canvas || !src || frozenRef.current || w === 0 || h === 0) return false;
+      canvas.width = w;
+      canvas.height = h;
+      const ctx = canvas.getContext("2d")!;
+      if (mirrorRef.current) {
+        ctx.save();
+        ctx.scale(-1, 1); // STEP 0 — mirror-clip compensation
+        ctx.drawImage(src, -w, 0, w, h);
+        ctx.restore();
+      } else {
+        ctx.drawImage(src, 0, 0, w, h); // raw
       }
-      rafRef.current = requestAnimationFrame(drawLoop);
+      return true;
     }, []);
 
+    const drawLoop = useCallback(() => {
+      paint();
+      rafRef.current = requestAnimationFrame(drawLoop);
+    }, [paint]);
+
+    // Dev test path: discover fixtures and restore the last selection.
     useEffect(() => {
+      if (!TEST_IMAGES) return;
+      let cancelled = false;
+      (async () => {
+        try {
+          const res = await fetch("/api/dev/test-image");
+          if (!res.ok) return;
+          const data = (await res.json()) as { images?: string[] };
+          if (cancelled || !data.images?.length) return;
+          setFixtures(data.images);
+          const saved = localStorage.getItem(FIXTURE_KEY);
+          if (saved && data.images.includes(saved)) setFixture(saved);
+        } catch {
+          /* fixtures unavailable — fall through to the real camera */
+        }
+      })();
+      return () => {
+        cancelled = true;
+      };
+    }, []);
+
+    // Load the selected fixture and drive the same draw loop the camera uses.
+    useEffect(() => {
+      if (!TEST_IMAGES || !fixture) {
+        imgRef.current = null;
+        return;
+      }
+      let cancelled = false;
+      setReady(false);
+      const img = new Image();
+      img.onload = () => {
+        if (cancelled) return;
+        imgRef.current = img;
+        frozenRef.current = false;
+        // Paint SYNCHRONOUSLY before onReady: consumers auto-scan on ready and
+        // call captureFrame(), which would otherwise capture — and freeze — a
+        // blank canvas the rAF loop hadn't reached yet.
+        paint();
+        setReady(true);
+        cancelAnimationFrame(rafRef.current);
+        rafRef.current = requestAnimationFrame(drawLoop);
+        onReady?.();
+        onSourceChange?.();
+      };
+      img.onerror = () => {
+        if (!cancelled) onError?.(`Test fixture "${fixture}" failed to load.`);
+      };
+      img.src = `/api/dev/test-image?name=${encodeURIComponent(fixture)}`;
+      return () => {
+        cancelled = true;
+        cancelAnimationFrame(rafRef.current);
+        imgRef.current = null;
+      };
+      // onReady/onError/onSourceChange are stable in practice; see below.
+      // eslint-disable-next-line react-hooks/exhaustive-deps
+    }, [fixture, drawLoop, paint]);
+
+    useEffect(() => {
+      // Fixture active → never touch getUserMedia (works with no camera at all).
+      if (TEST_IMAGES && fixture) return;
       let cancelled = false;
       let stream: MediaStream | null = null;
       setReady(false);
@@ -202,7 +290,7 @@ export const CameraStage = forwardRef<CameraStageHandle, CameraStageProps>(
       // onReady/onError are stable callbacks in practice; re-running on their
       // identity would restart the camera every render.
       // eslint-disable-next-line react-hooks/exhaustive-deps
-    }, [facing, drawLoop]);
+    }, [facing, drawLoop, fixture]);
 
     function toggleFacing() {
       const next: Facing = facing === "user" ? "environment" : "user";
@@ -256,16 +344,47 @@ export const CameraStage = forwardRef<CameraStageHandle, CameraStageProps>(
       getCanvas: () => canvasRef.current,
     }));
 
+    function pickFixture(next: string) {
+      const value = next === "__camera__" ? null : next;
+      setFixture(value);
+      try {
+        if (value) localStorage.setItem(FIXTURE_KEY, value);
+        else localStorage.removeItem(FIXTURE_KEY);
+      } catch {
+        /* private mode */
+      }
+    }
+
     // Camera toggles — paper chips that float top-right in both modes.
     const controls = (
-      <div className="absolute right-2 top-2 z-10 flex gap-1.5">
-        <button
-          onClick={toggleFacing}
-          className="tool-chip press pointer-events-auto flex items-center gap-1 px-2.5 py-1.5 text-[11px] font-medium"
-          aria-label="Switch between front and rear camera"
-        >
-          <SwitchCamera size={14} /> {facing === "user" ? "Front" : "Rear"}
-        </button>
+      <div className="absolute right-2 top-2 z-10 flex flex-wrap justify-end gap-1.5">
+        {TEST_IMAGES && fixtures.length > 0 && (
+          <label className="tool-chip press pointer-events-auto flex items-center gap-1 px-2.5 py-1.5 text-[11px] font-medium">
+            <ImageDown size={14} />
+            <select
+              value={fixture ?? "__camera__"}
+              onChange={(e) => pickFixture(e.target.value)}
+              aria-label="Test fixture instead of live camera"
+              className="max-w-[128px] bg-transparent text-[11px] font-medium outline-none"
+            >
+              <option value="__camera__">Live camera</option>
+              {fixtures.map((f) => (
+                <option key={f} value={f}>
+                  {f.replace(/\.(jpe?g|png|webp)$/i, "")}
+                </option>
+              ))}
+            </select>
+          </label>
+        )}
+        {!fixture && (
+          <button
+            onClick={toggleFacing}
+            className="tool-chip press pointer-events-auto flex items-center gap-1 px-2.5 py-1.5 text-[11px] font-medium"
+            aria-label="Switch between front and rear camera"
+          >
+            <SwitchCamera size={14} /> {facing === "user" ? "Front" : "Rear"}
+          </button>
+        )}
         <button
           onClick={toggleMirror}
           className={`tool-chip press pointer-events-auto flex items-center gap-1 px-2.5 py-1.5 text-[11px] font-medium ${
@@ -281,7 +400,7 @@ export const CameraStage = forwardRef<CameraStageHandle, CameraStageProps>(
 
     const notReady = !ready && (
       <p className="absolute inset-0 flex items-center justify-center text-sm text-white/80">
-        Starting camera…
+        {fixture ? "Loading test image…" : "Starting camera…"}
       </p>
     );
 

@@ -1,0 +1,229 @@
+/**
+ * Generated tutoring visuals — SPEC ONLY (backlog §1, §3, §4).
+ *
+ * The model emits a small, closed vocabulary of shape specs; the client draws
+ * them deterministically. It never emits SVG, coordinates or geometry. That is
+ * the same division already used for pointing (ARCHITECTURE §7 rule 3: the
+ * model decides WHICH/WHERE, never renders the content), and it means a
+ * malformed or hallucinated visual is impossible rather than merely unlikely —
+ * anything outside this vocabulary is dropped by `parseVisual`.
+ *
+ * Pure data + validation: no React, no DOM, no network, so the whole surface is
+ * testable headlessly.
+ *
+ * Per backlog §0, nothing here carries meaning by text alone. Numerals may be
+ * drawn as decoration (team decision 2026-07-26) but the narration always
+ * speaks the count and the shape always shows it.
+ */
+
+/** §1 — countable unit squares: area, and Pythagoras by counting (3²+4²=5²). */
+export interface UnitGridSpec {
+  kind: "unitGrid";
+  /** 1–3 grids side by side. */
+  grids: { rows: number; cols: number }[];
+  /** Draw each grid's total as a numeral beneath it (decoration only). */
+  showCounts?: boolean;
+}
+
+/** §1 — place-value blocks for combining/comparing quantities. */
+export interface PlaceValueSpec {
+  kind: "placeValue";
+  /** Quantities to combine, e.g. 500 + 800 → two rows. */
+  rows: { hundreds: number; tens: number; ones: number }[];
+}
+
+/** §4 — fold an isosceles triangle on its axis; the halves visibly match. */
+export interface FoldTriangleSpec {
+  kind: "foldTriangle";
+  base: number;
+  height: number;
+}
+
+/** §4 — cut the end off a parallelogram and slide it: it becomes a rectangle. */
+export interface RearrangeParallelogramSpec {
+  kind: "rearrangeParallelogram";
+  base: number;
+  height: number;
+  /** Horizontal offset of the top edge (the slanted part that moves). */
+  slant: number;
+}
+
+/** §3 — draggable right triangle; the ratio updates live with the angle. */
+export interface RatioTriangleSpec {
+  kind: "ratioTriangle";
+  /** Starting angle in degrees. */
+  angleDeg: number;
+  /** Which ratio to read out as the student drags. */
+  ratio: "sin" | "cos" | "tan";
+  /** Real length of the adjacent side from the worksheet, if there is one. */
+  adjacent?: number;
+}
+
+export type TutorVisual =
+  | UnitGridSpec
+  | PlaceValueSpec
+  | FoldTriangleSpec
+  | RearrangeParallelogramSpec
+  | RatioTriangleSpec;
+
+const int = (v: unknown, lo: number, hi: number, fallback: number): number => {
+  const n = Math.round(Number(v));
+  if (!Number.isFinite(n)) return fallback;
+  return Math.min(hi, Math.max(lo, n));
+};
+
+const num = (v: unknown, lo: number, hi: number, fallback: number): number => {
+  const n = Number(v);
+  if (!Number.isFinite(n)) return fallback;
+  return Math.min(hi, Math.max(lo, n));
+};
+
+/**
+ * Validate a raw `visual` object from the model into a drawable spec, or null.
+ *
+ * Bounds are deliberately tight and silent: a 40×40 "grid" is not countable and
+ * a 0° triangle is not drawable, so both are clamped into a range that always
+ * renders something sane rather than rejected into a blank step.
+ */
+export function parseVisual(raw: unknown): TutorVisual | null {
+  if (!raw || typeof raw !== "object") return null;
+  const v = raw as Record<string, unknown>;
+
+  switch (v.kind) {
+    case "unitGrid": {
+      const list = Array.isArray(v.grids) ? v.grids.slice(0, 3) : [];
+      const grids = list
+        .map((g) => {
+          const o = (g ?? {}) as Record<string, unknown>;
+          return { rows: int(o.rows, 1, 12, 0), cols: int(o.cols, 1, 12, 0) };
+        })
+        .filter((g) => g.rows > 0 && g.cols > 0);
+      if (grids.length === 0) return null;
+      return { kind: "unitGrid", grids, showCounts: v.showCounts !== false };
+    }
+
+    case "placeValue": {
+      const list = Array.isArray(v.rows) ? v.rows.slice(0, 3) : [];
+      const rows = list
+        .map((r) => {
+          const o = (r ?? {}) as Record<string, unknown>;
+          return {
+            hundreds: int(o.hundreds, 0, 9, 0),
+            tens: int(o.tens, 0, 9, 0),
+            ones: int(o.ones, 0, 9, 0),
+          };
+        })
+        .filter((r) => r.hundreds + r.tens + r.ones > 0);
+      if (rows.length === 0) return null;
+      return { kind: "placeValue", rows };
+    }
+
+    case "foldTriangle":
+      return {
+        kind: "foldTriangle",
+        base: num(v.base, 1, 100, 10),
+        height: num(v.height, 1, 100, 10),
+      };
+
+    case "rearrangeParallelogram": {
+      const base = num(v.base, 1, 100, 10);
+      return {
+        kind: "rearrangeParallelogram",
+        base,
+        height: num(v.height, 1, 100, 8),
+        // A slant wider than the base would invert the shape when it slides.
+        slant: num(v.slant, 0.5, base * 0.8, Math.min(3, base * 0.3)),
+      };
+    }
+
+    case "ratioTriangle": {
+      const ratio = v.ratio === "cos" || v.ratio === "tan" ? v.ratio : "sin";
+      const spec: RatioTriangleSpec = {
+        kind: "ratioTriangle",
+        // Below ~10° or above ~80° the triangle degenerates on a phone screen.
+        angleDeg: num(v.angleDeg, 10, 80, 45),
+        ratio,
+      };
+      const adj = Number(v.adjacent);
+      if (Number.isFinite(adj) && adj > 0) spec.adjacent = Math.min(9999, adj);
+      return spec;
+    }
+
+    default:
+      return null;
+  }
+}
+
+/* ── Pacing ──────────────────────────────────────────────────────────────────
+ * A visual is an ACTIVITY, not a glance. Bound to a step's lifetime it lived
+ * only as long as one spoken sentence, which is far too short to count 50
+ * squares and impossible for a draggable diagram. These give each kind the
+ * time it actually needs. Kept here (not in the component) so the numbers are
+ * testable and cannot drift from the animation they describe.
+ */
+
+/** Must match VisualCard's animation driver. */
+export const VISUAL_ANIM_DELAY_MS = 350;
+export const VISUAL_ANIM_MS = 1500;
+/** Interactive visuals wait for the student; this only stops them stranding. */
+export const EXPLORE_MAX_MS = 25_000;
+
+/** Interactive visuals hand control to the student instead of being timed. */
+export function isInteractiveVisual(v: TutorVisual): boolean {
+  return v.kind === "ratioTriangle";
+}
+
+/**
+ * Minimum TOTAL time this visual should stay on screen, narration included —
+ * the caller subtracts however long the sentence already took. 0 means the
+ * visual is interactive and waits for the student rather than a clock.
+ */
+export function minOnScreenMs(v: TutorVisual): number {
+  const clamp = (n: number, lo: number, hi: number) => Math.min(hi, Math.max(lo, n));
+  switch (v.kind) {
+    case "unitGrid": {
+      // Counting is the whole point, so scale with how much there is to count.
+      const squares = v.grids.reduce((n, g) => n + g.rows * g.cols, 0);
+      return clamp(1200 + squares * 110, 2500, 9000);
+    }
+    case "placeValue": {
+      const blocks = v.rows.reduce((n, r) => n + r.hundreds + r.tens + r.ones, 0);
+      return clamp(1500 + blocks * 180, 2500, 9000);
+    }
+    case "foldTriangle":
+    case "rearrangeParallelogram":
+      // The motion IS the proof: it must finish, then be left still long
+      // enough to register before anything moves on.
+      return VISUAL_ANIM_DELAY_MS + VISUAL_ANIM_MS + 2000;
+    case "ratioTriangle":
+      return 0;
+  }
+}
+
+/**
+ * Start a hold timer when a visual is revealed; await the returned function
+ * after the narration to keep it on screen for the rest of its minimum time.
+ * The clock lives here rather than in the component so the page stays free of
+ * impure calls during render, and so the pacing is testable on its own.
+ *
+ *   const hold = startVisualHold();
+ *   await speak(step.say);
+ *   await hold(step.visual);
+ */
+export function startVisualHold(now: () => number = () => Date.now()) {
+  const start = now();
+  return async (v: TutorVisual): Promise<number> => {
+    const remaining = minOnScreenMs(v) - (now() - start);
+    if (remaining <= 0) return 0;
+    await new Promise((r) => setTimeout(r, remaining));
+    return remaining;
+  };
+}
+
+/** Spoken value of a ratio at an angle — used for the live readout. */
+export function ratioValue(ratio: "sin" | "cos" | "tan", angleDeg: number): number {
+  const r = (angleDeg * Math.PI) / 180;
+  if (ratio === "sin") return Math.sin(r);
+  if (ratio === "cos") return Math.cos(r);
+  return Math.tan(r);
+}

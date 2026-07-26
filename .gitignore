@@ -41,4 +41,5 @@ yarn-error.log*
 # typescript
 *.tsbuildinfo
 next-env.d.ts
+cluely.com-DESIGN.md
 

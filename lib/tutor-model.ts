@@ -21,6 +21,7 @@
 
 import Anthropic from "@anthropic-ai/sdk";
 import type { VoiceIntent } from "@/lib/voice-commands";
+import { parseVisual, type TutorVisual } from "@/lib/tutor-visual";
 
 const TUTOR_MODEL = "claude-sonnet-4-6"; // vision-capable — a hard requirement for this route regardless of vendor
 /** Intent parsing only (amended §7 rule 3) — small + fast; swap target: MAAS text model. */
@@ -64,6 +65,13 @@ export interface TutorStep {
    * feed, one at a time (REWORK 4). Absent on plain-language steps.
    */
   formula?: string;
+  /**
+   * Generated countable/animated visual for THIS step (backlog §1/§3/§4) —
+   * a validated spec the client draws itself, shown in one large centred panel
+   * while the step narrates. Unlike `aids`, it is NOT anchored to an OCR line:
+   * it is new teaching material, not a mark on the worksheet.
+   */
+  visual?: TutorVisual;
 }
 
 /** OCR line map sent by the client: index, verbatim text, NORMALIZED box. */
@@ -95,6 +103,21 @@ Anchor rules:
 - "phrase": the EXACT characters copied from that line that the step refers to (a number, a word, a blank). Omit "phrase" to mean the whole line.
 - "formula": for a MATH or SCIENCE step, the ONE bite-sized operation happening in THIS step, written as LaTeX (KaTeX syntax, no $ delimiters), e.g. "\\\\frac{3}{4}=\\\\frac{9}{12}" or "F=ma". It is shown on the worksheet, one at a time, while your "say" explains the reasoning aloud. Keep it short — just the operation, not the whole solution. OMIT "formula" on plain-language steps (no math). Never put more than one formula in a step.
 - "aids": optional, at most 3 per step, for POINTING only: "circle"/"box" mark an anchor, "arrow" points from its anchor to "toLine"/"toPhrase". Do NOT use aids to write text — use "formula" for that.
+- "visual": optional. A picture the student can COUNT or WATCH MOVE, drawn for them. See the concrete-first rule below. At most one per step, and never in the same step as "formula".
+
+CONCRETE BEFORE ABSTRACT — this is a rule, not a flourish:
+When a step's idea is a quantity being COMBINED or COMPARED (adding, subtracting, area, or Pythagoras), do NOT jump to the symbols. First give a step with a "visual" the student can count, and let your "say" count it aloud with them. Only in a LATER step introduce the "formula" as shorthand for what they just counted.
+When a step's truth can be SEEN BY MOVING something — folding a shape onto itself, sliding a cut piece — use the matching "visual" instead of describing the motion in words.
+If a fact is neither a quantity nor a motion, use no visual. Do not decorate.
+
+Allowed "visual" values — use these EXACTLY, no other shapes, no coordinates, no SVG:
+- {"kind":"unitGrid","grids":[{"rows":3,"cols":3},{"rows":4,"cols":4},{"rows":5,"cols":5}]} — countable squares. Areas, and Pythagoras by counting (9 + 16 = 25). 1 to 3 grids, each at most 12x12.
+- {"kind":"placeValue","rows":[{"hundreds":5,"tens":0,"ones":0},{"hundreds":8,"tens":0,"ones":0}]} — blocks for adding/subtracting whole numbers. Up to 3 rows.
+- {"kind":"foldTriangle","base":10,"height":12} — folds an isosceles triangle along its axis so the two halves visibly match (proves the base angles are equal).
+- {"kind":"rearrangeParallelogram","base":12,"height":7,"slant":3} — cuts the slanted end off a parallelogram and slides it, making a rectangle (proves base x height).
+- {"kind":"ratioTriangle","angleDeg":43,"ratio":"sin","adjacent":35} — a right triangle the student DRAGS to change the angle, with the ratio updating live. Use for sin/cos/tan. "adjacent" only if the worksheet gives that length.
+
+Numbers may appear inside a visual, but your "say" must always speak the count or value too — never rely on the student reading it.
 
 Only when NO lines list is provided, fall back to:
 
@@ -201,6 +224,10 @@ function mapRawStep(s: unknown, lines?: TutorLine[]): TutorStep | null {
   if (aids.length > 0) result.aids = aids;
   const formula = String(step.formula ?? "").trim().slice(0, 120);
   if (formula) result.formula = formula;
+  // Anything outside the closed visual vocabulary is silently dropped, so a
+  // hallucinated shape degrades to a normal narrated step rather than breaking.
+  const visual = parseVisual((step as { visual?: unknown }).visual);
+  if (visual) result.visual = visual;
   return result;
 }
 
