@@ -32,6 +32,7 @@ import { speak, stopSpeaking, announce, primeSpeech, synthesizeSpeech } from "@/
 import { installAudioUnlock } from "@/lib/audio";
 import { SessionLogger } from "@/lib/event-queue";
 import { startVoiceListener, VoiceListener } from "@/lib/stt";
+import { isAffirmative } from "@/lib/voice-commands";
 
 interface TutorRegion {
   x: number;
@@ -211,6 +212,7 @@ export default function TutoringPage() {
   const [frame, setFrame] = useState<CapturedFrame | null>(null);
   const [steps, setSteps] = useState<TutorStep[]>([]);
   const [activeStep, setActiveStep] = useState(-1);
+  const activeStepRef = useRef(-1);
   /** True while a draggable visual has the floor and narration is waiting. */
   const [awaitingContinue, setAwaitingContinue] = useState(false);
   const continueRef = useRef<(() => void) | null>(null);
@@ -219,6 +221,56 @@ export default function TutoringPage() {
   const [errorMsg, setErrorMsg] = useState<string | null>(null);
   const [listening, setListening] = useState(false);
   const [showText, setShowText] = useState(false); // text hidden by default (S7)
+  /** Step index whose visual the student dismissed with the X. */
+  const [dismissedVisual, setDismissedVisual] = useState<number | null>(null);
+  /** Narration reached the end — overlays are cleared so the paper is visible. */
+  const [narrationDone, setNarrationDone] = useState(false);
+  /** Mid-explanation clarification: "asking" while answering, "answered" while
+   *  waiting for the student to confirm before the explanation resumes. */
+  const [clarifyState, setClarifyState] = useState<"idle" | "asking" | "answered">("idle");
+  const clarifyStateRef = useRef<"idle" | "asking" | "answered">("idle");
+  const [clarifyText, setClarifyText] = useState<string | null>(null);
+  /** Held while narration is paused for a clarification; released to resume. */
+  const pauseRef = useRef<{ promise: Promise<void>; release: () => void } | null>(null);
+  /** Set when a question cut a step short, so that step is re-spoken on resume. */
+  const interruptedRef = useRef(false);
+
+  function setClarify(state: "idle" | "asking" | "answered") {
+    clarifyStateRef.current = state;
+    setClarifyState(state);
+  }
+
+  /** Release any pending explore wait — used by Next, and by anything that
+   *  cancels or pauses narration (new question, clarification, retake, tapping
+   *  a transcript step). Declared here because clarify() below uses it. */
+  function releaseContinue() {
+    continueRef.current?.();
+    continueRef.current = null;
+  }
+
+  /** Block the narration loop at its next checkpoint. */
+  function pauseNarration() {
+    if (pauseRef.current) return;
+    let release!: () => void;
+    const promise = new Promise<void>((r) => (release = r));
+    pauseRef.current = { promise, release };
+  }
+
+  /** Let the narration loop continue (also used to unblock on cancel/unmount,
+   *  otherwise the loop would await a promise that never settles). */
+  function resumeNarration() {
+    const held = pauseRef.current;
+    pauseRef.current = null;
+    held?.release();
+  }
+
+  /** Narration checkpoint: waits out any pause. False → this run is superseded. */
+  async function waitIfPaused(run: number): Promise<boolean> {
+    while (pauseRef.current && narrationRun.current === run) {
+      await pauseRef.current.promise;
+    }
+    return narrationRun.current === run;
+  }
 
   async function toggleMic() {
     if (listenerRef.current) {
@@ -238,10 +290,114 @@ export default function TutoringPage() {
   }
 
   async function handleUtterance(text: string) {
-    if (busyRef.current || narratingRef.current) return;
-    if (text.trim().split(/\s+/).length < 2) return;
+    const words = text.trim().split(/\s+/);
+
+    // Waiting for "shall I carry on?" — a yes resumes, anything else is
+    // treated as another question (follow-ups keep working until they're ready).
+    if (clarifyStateRef.current === "answered") {
+      if (isAffirmative(text)) {
+        continueExplanation();
+        return;
+      }
+      if (words.length < 2) return;
+      await clarify(text);
+      return;
+    }
+    if (clarifyStateRef.current === "asking") return; // already fetching an answer
+    if (words.length < 2) return;
+
+    // Mid-explanation question → pause and answer it, never restart (item 4).
+    if (narratingRef.current && stepsRef.current.length > 0) {
+      await clarify(text);
+      return;
+    }
+    if (busyRef.current) return; // still thinking — nothing to interrupt yet
     setQuestion(text);
     await ask(text);
+  }
+
+  /**
+   * Answer a question asked DURING an explanation, then offer to carry on.
+   * The narration loop is paused at its checkpoint rather than cancelled, so
+   * resuming picks up the same step instead of starting over.
+   */
+  async function clarify(text: string) {
+    const captured = frameRef.current;
+    if (!captured) return;
+    const run = narrationRun.current;
+
+    pauseNarration();
+    interruptedRef.current = true; // re-say the interrupted step on resume
+    stopSpeaking(); // go quiet immediately — the student is talking
+    releaseContinue(); // don't leave an explore wait hanging behind the pause
+    setClarify("asking");
+    setClarifyText(null);
+    logger.current?.log({ type: "tutor_question", word: text });
+
+    try {
+      const res = await fetch("/api/clarify", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          imageBase64: captured.base64,
+          question: text,
+          history: historyRef.current,
+          currentStep: stepsRef.current[Math.max(0, activeStepRef.current)]?.say,
+        }),
+      });
+      if (!res.ok) throw new Error(`clarify ${res.status}`);
+      const { say } = (await res.json()) as { say?: string };
+      const answer = (say ?? "").trim();
+      if (!answer) throw new Error("empty clarification");
+      if (narrationRun.current !== run) return; // superseded meanwhile
+
+      historyRef.current = [
+        ...historyRef.current,
+        { role: "user", content: text },
+        { role: "assistant", content: answer },
+      ];
+      setClarifyText(answer);
+      setClarify("answered");
+      try {
+        await speak(answer);
+        if (narrationRun.current !== run || clarifyStateRef.current !== "answered") return;
+        await speak("Shall I carry on?");
+      } catch {
+        /* the Continue button is on screen regardless */
+      }
+    } catch (err) {
+      console.error("clarify failed:", err);
+      if (narrationRun.current !== run) return;
+      setClarifyText("I didn't catch that one — I'll carry on, ask me again any time.");
+      setClarify("answered");
+    }
+  }
+
+  /**
+   * Typed question. Mid-explanation it clarifies (same as speaking); otherwise
+   * it starts a fresh explanation.
+   */
+  async function submitQuestion() {
+    const q = question.trim();
+    if (!q) return;
+    if (clarifyStateRef.current === "asking") return;
+    if (
+      clarifyStateRef.current === "answered" ||
+      (narratingRef.current && stepsRef.current.length > 0)
+    ) {
+      setQuestion("");
+      await clarify(q);
+      return;
+    }
+    await ask(q);
+  }
+
+  /** Student confirmed — drop the clarification and resume the explanation. */
+  function continueExplanation() {
+    setClarify("idle");
+    setClarifyText(null);
+    stopSpeaking();
+    resumeNarration();
   }
 
   useEffect(() => {
@@ -254,10 +410,22 @@ export default function TutoringPage() {
       clearTimeout(micStart);
       listenerRef.current?.stop();
       listenerRef.current = null;
+      // Leaving mid-response must go silent immediately. stopSpeaking() alone
+      // only kills the CURRENT utterance — the narration loop would wake up,
+      // advance, and start speaking the next step after unmount. Bump the run
+      // id (every await in the loop checks it) and release any explore wait.
+      narrationRun.current += 1;
+      narratingRef.current = false;
+      releaseContinue();
+      resumeNarration(); // a paused loop would otherwise await forever
       stopSpeaking();
     };
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
+
+  useEffect(() => {
+    activeStepRef.current = activeStep; // clarify() reads this outside render
+  }, [activeStep]);
 
   useEffect(() => {
     if (!busy) return;
@@ -305,13 +473,6 @@ export default function TutoringPage() {
    * (prefetching i+1 for near-gapless playback), reveal its formula/marks at
    * audio start, advance. Cancelled by bumping narrationRun.
    */
-  /** Release any pending explore wait — used by Next, and by anything that
-   *  cancels narration (new question, retake, tapping a transcript step). */
-  function releaseContinue() {
-    continueRef.current?.();
-    continueRef.current = null;
-  }
-
   /** Resolves when the student taps Next, or after EXPLORE_MAX_MS so an
    *  unattended session never stalls forever. */
   function waitForContinue(): Promise<void> {
@@ -340,6 +501,8 @@ export default function TutoringPage() {
         if (narrationRun.current !== run) return;
       }
       if (i >= stepsRef.current.length) break; // stream done, no more steps
+      // Checkpoint: a mid-explanation question holds us here until answered.
+      if (!(await waitIfPaused(run))) return;
       const step = stepsRef.current[i];
       const ready = synthesizeSpeech(step.say).catch(() => null); // this step's audio
       const next = stepsRef.current[i + 1];
@@ -354,6 +517,13 @@ export default function TutoringPage() {
         /* keep advancing on TTS failure */
       }
       if (narrationRun.current !== run) return;
+
+      // A question cut this step short. Don't advance — once the student is
+      // ready, say THIS step again (they missed the end of it) and carry on.
+      if (interruptedRef.current) {
+        interruptedRef.current = false;
+        continue;
+      }
 
       // A visual is an activity, not a glance: give it the time its kind needs
       // before moving on. Only the step that INTRODUCES a visual holds —
@@ -376,7 +546,10 @@ export default function TutoringPage() {
       }
       i += 1;
     }
-    if (narrationRun.current === run) narratingRef.current = false;
+    if (narrationRun.current === run) {
+      narratingRef.current = false;
+      setNarrationDone(true); // explanation over → clear any overlay
+    }
   }
 
   async function ask(text?: string) {
@@ -388,6 +561,10 @@ export default function TutoringPage() {
     stopSpeaking();
     const run = ++narrationRun.current; // cancel any prior narration
     releaseContinue();
+    resumeNarration(); // release a clarification pause from the previous run
+    interruptedRef.current = false;
+    setClarify("idle");
+    setClarifyText(null);
     stepsRef.current = [];
     streamDoneRef.current = false;
     frameRef.current = captured;
@@ -398,6 +575,8 @@ export default function TutoringPage() {
     setErrorMsg(null);
     setSteps([]);
     setActiveStep(-1);
+    setDismissedVisual(null);
+    setNarrationDone(false);
     logger.current?.log({ type: "tutor_question", word: q });
 
     try {
@@ -478,6 +657,10 @@ export default function TutoringPage() {
     stopSpeaking();
     narrationRun.current += 1; // cancel narration
     releaseContinue();
+    resumeNarration();
+    interruptedRef.current = false;
+    setClarify("idle");
+    setClarifyText(null);
     narratingRef.current = false;
     stepsRef.current = [];
     streamDoneRef.current = false;
@@ -489,6 +672,8 @@ export default function TutoringPage() {
     setSteps([]);
     setActiveStep(-1);
     setErrorMsg(null);
+    setDismissedVisual(null);
+    setNarrationDone(false);
   }
 
   const active = activeStep >= 0 ? steps[activeStep] : null;
@@ -508,13 +693,30 @@ export default function TutoringPage() {
     return null;
   })();
 
+  // An overlay must never outlive its explanation: it goes when the student
+  // closes it, and when narration finishes (`narrationDone`) so the worksheet
+  // is never left buried under a picture. A NEW visual re-appears on its own
+  // because dismissal is keyed by the step that introduced it.
+  const visual =
+    stickyVisual && stickyVisual.key !== dismissedVisual && !narrationDone ? stickyVisual : null;
+
   // Manual tap on a step in the transcript — takes over from auto-narration.
   const playStep = (i: number) => {
     narrationRun.current += 1; // stop the streaming narration loop
     releaseContinue(); // never leave the explore wait (and its button) hanging
+    // Clear any clarification pause too — a stale one would block the NEXT run
+    // at its first checkpoint.
+    resumeNarration();
+    interruptedRef.current = false;
+    setClarify("idle");
+    setClarifyText(null);
     stopSpeaking();
     narratingRef.current = true;
     setActiveStep(i);
+    // Replaying a step brings its picture back, even after the run ended or
+    // the student closed it.
+    setNarrationDone(false);
+    setDismissedVisual(null);
     void speak(steps[i].say)
       .catch(() => {})
       .finally(() => {
@@ -527,7 +729,7 @@ export default function TutoringPage() {
       <CameraStage ref={stage} fullBleed>
         {/* Aids point at the paper; hide them while a visual covers it, or the
             student is directed at something they cannot see. */}
-        {active && !stickyVisual && (
+        {active && !visual && (
           <AidsOverlay region={active.region} aids={active.aids ?? []} />
         )}
         {/* The visual persists across later steps (keyed by the step that
@@ -535,19 +737,50 @@ export default function TutoringPage() {
             one-at-a-time rule still governs FORMULA cards — those are a glance
             and must not stack — but a visual may be narrated over for several
             steps while highlighting and pointing carry the rest. */}
-        {stickyVisual && <VisualCard key={`v${stickyVisual.key}`} visual={stickyVisual.visual} />}
-        {!stickyVisual && active?.formula && (
+        {visual && (
+          <VisualCard
+            key={`v${visual.key}`}
+            visual={visual.visual}
+            avoid={active?.region ?? null}
+            onClose={() => setDismissedVisual(visual.key)}
+          />
+        )}
+        {!visual && active?.formula && (
           <FormulaCard key={activeStep} formula={active.formula} region={active.region} />
         )}
         {/* Explore mode: the tutor has gone quiet and handed over. The button
             is the way back, so it sits clear of the panel and is unmissable. */}
-        {awaitingContinue && (
+        {awaitingContinue && clarifyState === "idle" && (
           <button
             onClick={releaseContinue}
             className="btn-accent press pointer-events-auto absolute bottom-4 left-1/2 z-20 flex -translate-x-1/2 items-center gap-1.5 px-5 py-2.5 text-sm font-semibold"
           >
             Next <ChevronRight size={17} />
           </button>
+        )}
+
+        {/* Clarification: the explanation is PAUSED, not restarted. The student
+            can ask again, and taps Continue when they're ready to carry on. */}
+        {clarifyState !== "idle" && (
+          <div className="pointer-events-none absolute inset-x-0 bottom-2 z-20 flex justify-center px-3">
+            <div className="tool-sheet pointer-events-auto fadein w-full max-w-md rounded-[16px] px-4 py-3">
+              <p className="paper-kicker mb-1">
+                {clarifyState === "asking" ? "answering your question…" : "your question"}
+              </p>
+              {clarifyText && <p className="text-sm text-[var(--ink)]">{clarifyText}</p>}
+              {clarifyState === "answered" && (
+                <div className="mt-2.5 flex items-center gap-2">
+                  <button
+                    onClick={continueExplanation}
+                    className="btn-accent press flex items-center gap-1.5 px-4 py-2 text-sm font-semibold"
+                  >
+                    Continue <ChevronRight size={16} />
+                  </button>
+                  <span className="mono-hint text-[11px]">or just ask another question</span>
+                </div>
+              )}
+            </div>
+          </div>
         )}
       </CameraStage>
 
@@ -658,8 +891,14 @@ export default function TutoringPage() {
             <input
               value={question}
               onChange={(e) => setQuestion(e.target.value)}
-              onKeyDown={(e) => e.key === "Enter" && void ask()}
-              placeholder={listening ? "Just speak — or type here…" : "Ask about the worksheet…"}
+              onKeyDown={(e) => e.key === "Enter" && void submitQuestion()}
+              placeholder={
+                clarifyState !== "idle"
+                  ? "Ask a follow-up…"
+                  : listening
+                    ? "Just speak — or type here…"
+                    : "Ask about the worksheet…"
+              }
               className="paper-input min-w-0 flex-1 px-3.5 py-2.5 text-[15px] placeholder:text-[var(--ink-soft)]"
             />
             <button
@@ -673,8 +912,8 @@ export default function TutoringPage() {
               {listening ? <Mic size={18} /> : <MicOff size={18} />}
             </button>
             <button
-              onClick={() => void ask()}
-              disabled={busy || !question.trim()}
+              onClick={() => void submitQuestion()}
+              disabled={busy || !question.trim() || clarifyState === "asking"}
               className="btn-accent press flex h-11 w-11 items-center justify-center disabled:opacity-40"
               aria-label="Ask"
             >

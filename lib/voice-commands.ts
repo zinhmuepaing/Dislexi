@@ -24,6 +24,21 @@ export interface VoiceIntent {
   scope?: ReadScope;
 }
 
+/**
+ * "Yes, carry on" — used by AI Tutoring to decide whether a spoken reply after
+ * a mid-explanation clarification means RESUME, or is another question.
+ * Deterministic keyword match, no model: a resume confirmation is not worth a
+ * round trip, and anything that isn't a clear yes is safer treated as a new
+ * question (the student gets an answer instead of being steamrolled).
+ */
+const AFFIRMATIVE =
+  /^(y|yes|yeah|yea|yep|yup|ya|ok|okay|k|sure|right|fine|got it|i got it|understood|i understand|i understood|understand|continue|carry on|carry on then|go on|go ahead|next|please continue|please carry on|keep going|i see|clear|all clear|makes sense|that makes sense|done|thanks|thank you)\b[\s.!,]*$/i;
+
+/** True when the utterance is a plain "yes / carry on" confirmation. */
+export function isAffirmative(utterance: string): boolean {
+  return AFFIRMATIVE.test(utterance.trim());
+}
+
 const SCOPE_WORDS: [RegExp, ReadScope][] = [
   [/\bwords?\b/, "word"],
   [/\b(sentences?|lines?|questions?)\b/, "sentence"],

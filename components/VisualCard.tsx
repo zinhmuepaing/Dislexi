@@ -2,14 +2,14 @@
 
 /**
  * VisualCard (backlog §1, §3, §4) — draws ONE step's generated visual in a
- * large centred panel over the frozen frame.
+ * large panel over the frozen frame.
  *
- * Large and centred, not anchored beside a line like FormulaCard: these are
- * meant to be COUNTED or WATCHED, and a 5x5 grid offset in a corner is not
- * countable on a phone. It covers the worksheet for that step deliberately —
- * the point of the concrete-first rule is to look at the picture, not the
- * paper — and it clears before the next step (same one-at-a-time rule as the
- * formula card, REWORK 4).
+ * Large, not anchored beside a line like FormulaCard: these are meant to be
+ * COUNTED or WATCHED, and a 5x5 grid offset in a corner is not countable on a
+ * phone. But it is deliberately NOT centred — the centre of the frame is where
+ * the question and working live — so it parks on the side of the frame the
+ * current step is not pointing at (`avoid`), and it is dismissable (`onClose`)
+ * so a student is never stuck looking at a picture instead of the paper.
  *
  * Geometry comes entirely from a validated spec (lib/tutor-visual.ts); the
  * model never sends coordinates or SVG. Numerals appear only as decoration —
@@ -17,7 +17,7 @@
  */
 
 import { useCallback, useEffect, useRef, useState } from "react";
-import { RotateCcw } from "lucide-react";
+import { RotateCcw, X } from "lucide-react";
 import {
   ratioValue,
   VISUAL_ANIM_DELAY_MS,
@@ -372,7 +372,16 @@ function RatioTriangle({ spec }: { spec: RatioTriangleSpec }) {
 
 /* ── panel ──────────────────────────────────────────────────────────────── */
 
-export function VisualCard({ visual }: { visual: TutorVisual }) {
+export function VisualCard({
+  visual,
+  avoid,
+  onClose,
+}: {
+  visual: TutorVisual;
+  /** Normalized rect the card must not cover (the step's spot on the paper). */
+  avoid?: { y: number; h: number } | null;
+  onClose?: () => void;
+}) {
   let body: React.ReactNode = null;
   if (visual.kind === "unitGrid") body = <UnitGrid spec={visual} />;
   else if (visual.kind === "placeValue") body = <PlaceValue spec={visual} />;
@@ -381,9 +390,29 @@ export function VisualCard({ visual }: { visual: TutorVisual }) {
   else if (visual.kind === "ratioTriangle") body = <RatioTriangle spec={visual} />;
   if (!body) return null;
 
+  // Never centred: the middle of the frame is where the worksheet's question
+  // and working usually sit. Park the card on whichever side of the frame the
+  // current step is NOT pointing at — low step → card high, high step → card
+  // low (kept clear of the bottom sheet). No anchor info → default to the top.
+  const stepCentre = avoid ? avoid.y + avoid.h / 2 : 1;
+  const placeLow = stepCentre < 0.5;
+
   return (
-    <div className="pointer-events-none absolute inset-0 z-10 flex items-center justify-center p-3">
-      <div className="fadein max-h-[78%] max-w-[88%] overflow-auto rounded-[14px] border-2 border-[var(--ink)] bg-[var(--paper-card)] px-4 py-3 shadow-[5px_6px_0_rgba(38,55,70,0.2)]">
+    <div
+      className={`pointer-events-none absolute inset-0 z-10 flex justify-center p-3 ${
+        placeLow ? "items-end pb-[58dvh]" : "items-start pt-14"
+      }`}
+    >
+      <div className="fadein relative max-h-[38dvh] max-w-[88%] overflow-auto rounded-[14px] border-2 border-[var(--ink)] bg-[var(--paper-card)] px-4 py-3 shadow-[5px_6px_0_rgba(38,55,70,0.2)]">
+        {onClose && (
+          <button
+            onClick={onClose}
+            className="pointer-events-auto press absolute right-1 top-1 z-10 flex h-7 w-7 items-center justify-center rounded-full border-[1.5px] border-[var(--ink)] bg-[var(--paper)] text-[var(--ink)]"
+            aria-label="Close this picture"
+          >
+            <X size={14} />
+          </button>
+        )}
         {body}
       </div>
     </div>

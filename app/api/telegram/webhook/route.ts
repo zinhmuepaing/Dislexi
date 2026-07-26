@@ -15,7 +15,7 @@ import { NextRequest, NextResponse } from "next/server";
 import { supabase } from "@/lib/supabase";
 import { computeStats, statsToText, EventRow } from "@/lib/analytics";
 import { answerCallbackQuery, sendMessage, botUsername } from "@/lib/telegram";
-import { summarizeStudyPatterns, classifyGroupRequest } from "@/lib/tutor-model";
+import { summarizeStudyPatterns, classifyGroupRequest, answerGroupQuestion } from "@/lib/tutor-model";
 
 export const runtime = "nodejs";
 export const maxDuration = 60;
@@ -129,7 +129,22 @@ async function handleDirectMessage(chatId: number, text: string): Promise<void> 
       : new Date(Date.UTC(Number(y), Number(m), 1));
     await reviewRange(chatId, start.toISOString(), end.toISOString(), text);
   } else {
-    await sendMessage(chatId, "Pick a review range:", REVIEW_KEYBOARD);
+    // Free text in a DM gets the same custom-prompt handling as a group
+    // mention — no reason a 1:1 chat should be less capable.
+    const intent = await classifyGroupRequest(text);
+    switch (intent.action) {
+      case "review":
+        await handleReview(chatId, intent.days);
+        break;
+      case "ask":
+        await answerQuestion(chatId, text, intent.days);
+        break;
+      case "report":
+        await handleLatestReport(chatId);
+        break;
+      default:
+        await sendMessage(chatId, "Ask me anything about the child's reading practice, or pick a range:", REVIEW_KEYBOARD);
+    }
   }
 }
 
@@ -181,6 +196,9 @@ async function handleGroupMessage(
     case "review":
       await handleReview(chatId, intent.days, `${tag} — `);
       break;
+    case "ask":
+      await answerQuestion(chatId, request, intent.days, `${tag} — `);
+      break;
     case "report":
       await handleLatestReport(chatId, `${tag} — `);
       break;
@@ -190,9 +208,52 @@ async function handleGroupMessage(
     default:
       await sendMessage(
         chatId,
-        `${tag} — I can't help with that, but I can show how the child's reading practice is going. Try “@${username} how did they do this week?” or pick a range:`,
+        `${tag} — I can't help with that, but I can answer anything about the child's reading practice — try “@${username} what should they practise?” or pick a range:`,
         REVIEW_KEYBOARD,
       );
+  }
+}
+
+/**
+ * Custom prompts: answer an arbitrary on-topic question grounded in the
+ * child's own event data over `days` (practice suggestions, sticking points,
+ * progress). Falls back to the plain aggregates so the asker always gets the
+ * underlying numbers even when the model is unavailable.
+ */
+async function answerQuestion(
+  chatId: number,
+  question: string,
+  days: number,
+  prefix = "",
+): Promise<void> {
+  const since = new Date(Date.now() - days * 24 * 60 * 60 * 1000).toISOString();
+  const { data: events, error } = await supabase()
+    .from("events")
+    .select("ts, type, word, grapheme, question_ref")
+    .gte("ts", since)
+    .lt("ts", new Date().toISOString())
+    .order("ts", { ascending: true });
+
+  if (error) {
+    console.error("question query failed:", error);
+    await sendMessage(chatId, `${prefix}Sorry, I couldn't load the data. Try again later.`);
+    return;
+  }
+  if (!events || events.length === 0) {
+    await sendMessage(
+      chatId,
+      `${prefix}I have no practice sessions recorded for the last ${days} days, so there's nothing to base an answer on yet.`,
+    );
+    return;
+  }
+
+  const aggregate = statsToText(computeStats(events as EventRow[]), `last ${days} days`);
+  try {
+    const answer = await answerGroupQuestion(question, aggregate);
+    await sendMessage(chatId, prefix ? `${prefix}\n${answer}` : answer);
+  } catch (err) {
+    console.error("question answer failed:", err);
+    await sendMessage(chatId, `${prefix}${aggregate}`);
   }
 }
 

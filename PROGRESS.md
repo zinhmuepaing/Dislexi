@@ -1,5 +1,62 @@
 # PROGRESS.md — Dislexi build session log
 
+## RESUME FROM HERE (2026-07-26, fourteenth session — report/audio/overlay/tutor/bot)
+
+Branch `feature/tutor-conversation-and-report-polish` (not merged, not pushed).
+Five items off the team's optimize list. Gates green: logic-tests, `npx eslint .`
+(0/0), `npm run build`.
+
+1. **PDF charts on black → white.** Root cause: Chart.js canvases are
+   TRANSPARENT and JPEG has no alpha, so every transparent pixel encoded BLACK.
+   `chartJpegOnWhite()` in `app/stats/[sessionId]/page.tsx` composites each
+   canvas onto white at full backing resolution before `addImage`. DPR stays 2
+   (the 4.5 MB Vercel body limit still applies — do not raise it).
+2. **Audio now stops on leaving mid-response.** `stopSpeaking()` in the
+   tutoring cleanup only killed the CURRENT utterance — the narration loop woke
+   up, advanced, and spoke the next step after unmount. Cleanup now bumps
+   `narrationRun`, clears `narratingRef`, releases waits. (Exam-Prep/Autopsy
+   were already fine: single utterances + `stopAllAudio`.)
+3. **Overlay (VisualCard) is dismissable and off-centre.** New `onClose` (X, top
+   right) and `avoid` props; the card parks opposite the step's anchor
+   (`items-start pt-14` / `items-end pb-[58dvh]`) instead of dead centre where
+   the question sits. It clears on close, on a new question, and when narration
+   ends (`narrationDone`); replaying a step brings it back.
+4. **Conversation-aware tutoring — the explanation no longer restarts.**
+   Mid-narration questions used to be DROPPED (`if (narratingRef.current)
+   return`). Now: pause gate in the narration loop (`pauseNarration`/
+   `waitIfPaused`) → `POST /api/clarify` (new route + `clarifyQuestion` adapter,
+   answers ONLY the interruption) → speak it → "Shall I carry on?" → resume the
+   SAME step (`interruptedRef` re-says the step that was cut off). Follow-ups
+   keep working; `isAffirmative()` in `lib/voice-commands.ts` (tested) decides
+   yes-resume vs another question. Typed questions route the same way
+   (`submitQuestion`). Every cancel path calls `resumeNarration()` — a stale
+   pause would deadlock the NEXT run at its first checkpoint.
+   Prompt now REQUIRES arrows for any step that moves attention between two
+   places (was: arrows optional alongside box/circle).
+5. **Telegram custom prompts work.** `classifyGroupRequest` gained an `ask`
+   action; `answerGroupQuestion()` answers freely but GROUNDED in the event
+   aggregates (declines what the data can't support, no invented numbers, same
+   no-clinical-claims rule). Wired for group mentions AND DMs.
+   Live-verified: 10/10 routing (practice ideas / insights / stuck words /
+   improving / what next → ask; "last session" → report; weather, jokes →
+   other), and the answer cited the real stuck words, re-read question and
+   pacing with no markdown or clinical language.
+
+**Verified how:** logic-tests (new `isAffirmative` block), lint, build; browser
+smoke on `/dev/visuals` (card renders non-centred; X only when `onClose` given)
+and `/tutoring` (mounts clean, no runtime error); live model calls for item 5.
+**NOT verified — needs device/session:** the actual PDF (needs a real session
+id with events), and the clarify pause/resume with real voice + camera.
+
+**Traps found for whoever is next:**
+- `tsconfig` includes `**/*.mts`, so the untracked scratch `scripts/
+  test-compare.mts` (imports `@napi-rs/canvas`, not installed) FAILS
+  `npm run build`. Left in place; move it aside or install the dep to build.
+- `.env.local` values are quoted AND carry trailing ` # comment` — a naive
+  loader that strips quotes before the comment leaves a stray `"` and gets a
+  401 from Anthropic. Same class of bug as the old Vercel env failures.
+- `npm install` was needed for `@fontsource/opendyslexic` after the pull.
+
 ## RESUME FROM HERE (2026-07-24, thirteenth session — pointing settled on device)
 
 Branch `feature/word-pointing-occlusion-fix` (not merged, no PR — user opens it).

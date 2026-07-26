@@ -102,7 +102,9 @@ Anchor rules:
 - "line": the index from the WORKSHEET LINES list the step talks about.
 - "phrase": the EXACT characters copied from that line that the step refers to (a number, a word, a blank). Omit "phrase" to mean the whole line.
 - "formula": for a MATH or SCIENCE step, the ONE bite-sized operation happening in THIS step, written as LaTeX (KaTeX syntax, no $ delimiters), e.g. "\\\\frac{3}{4}=\\\\frac{9}{12}" or "F=ma". It is shown on the worksheet, one at a time, while your "say" explains the reasoning aloud. Keep it short — just the operation, not the whole solution. OMIT "formula" on plain-language steps (no math). Never put more than one formula in a step.
-- "aids": optional, at most 3 per step, for POINTING only: "circle"/"box" mark an anchor, "arrow" points from its anchor to "toLine"/"toPhrase". Do NOT use aids to write text — use "formula" for that.
+- "aids": at most 3 per step, for POINTING only. Do NOT use aids to write text — use "formula" for that.
+  - "arrow": points FROM its own anchor TO "toLine"/"toPhrase". PREFER AN ARROW whenever the step connects two things or tells the student where to look or write next — "this number goes in that blank", "compare this with that", "put the answer here". An arrow shows direction; a box only says "somewhere around here". Include at least one arrow on every step that moves the student's attention from one place to another.
+  - "circle"/"box": mark a single anchor the step is about, when there is nothing to connect it to.
 - "visual": optional. A picture the student can COUNT or WATCH MOVE, drawn for them. See the concrete-first rule below. At most one per step, and never in the same step as "formula".
 
 CONCRETE BEFORE ABSTRACT — this is a rule, not a flourish:
@@ -724,11 +726,113 @@ export function stripMarkdown(text: string): string {
     .trim();
 }
 
+/**
+ * Mid-explanation clarification (conversation-aware tutoring): the student
+ * interrupted at `stepIndex` to ask something. Answer JUST that, briefly, so
+ * the narration can resume where it paused — the explanation is NOT restarted,
+ * so this must not re-teach the whole problem.
+ */
+export async function clarifyQuestion(opts: {
+  imageBase64: string;
+  question: string;
+  history?: TutorTurn[];
+  /** The sentence the tutor was saying when the student cut in. */
+  currentStep?: string;
+}): Promise<string> {
+  const data = opts.imageBase64.replace(/^data:image\/\w+;base64,/, "");
+  const context = opts.currentStep
+    ? `You were part-way through explaining, and had just said: "${opts.currentStep}"\n\n`
+    : "";
+
+  const response = await client().messages.create({
+    model: TUTOR_MODEL,
+    max_tokens: 300,
+    system:
+      "You are the same patient tutor helping a primary-school student in Singapore with " +
+      "dyslexia/ADHD, working through the worksheet in the photo. The student has INTERRUPTED " +
+      "your step-by-step explanation to ask something, and you will carry on from exactly where " +
+      "you paused as soon as you have answered.\n\n" +
+      "Answer ONLY what they just asked — do not restart the explanation, do not summarize what " +
+      "you already covered, and do not race ahead to later steps. One or two short spoken " +
+      "sentences, simple words, no lists, no markdown, no LaTeX. If they are asking about a word " +
+      "or symbol on the page, say what it means in plain language. Never comment on their ability " +
+      "or emotions. Reply with the spoken answer as PLAIN TEXT only — no JSON, no quotes.",
+    messages: [
+      ...(opts.history ?? []).map((t) => ({ role: t.role, content: t.content })),
+      {
+        role: "user" as const,
+        content: [
+          { type: "text" as const, text: `${context}The student asks: ${opts.question}` },
+          {
+            type: "image" as const,
+            source: { type: "base64" as const, media_type: sniffMediaType(data), data },
+          },
+        ],
+      },
+    ],
+  });
+
+  return stripMarkdown(
+    response.content
+      .filter((b): b is Anthropic.TextBlock => b.type === "text")
+      .map((b) => b.text)
+      .join("")
+      .trim(),
+  );
+}
+
 export type GroupIntent =
   | { action: "review"; days: number }
   | { action: "report" }
   | { action: "help" }
+  /** Any other on-topic request answered freely from the child's data
+   *  ("what should they practise?", "which words trip them up?"). */
+  | { action: "ask"; days: number }
   | { action: "other" };
+
+/**
+ * Answer a free-form question about the child's practice, GROUNDED in the
+ * event aggregates (Telegram group, custom prompts). The stats text is the
+ * only evidence available to the model — anything not derivable from it must
+ * be declined rather than invented, so a parent never gets a confident answer
+ * built on nothing. Same indicators-not-diagnosis rule as the review path.
+ */
+export async function answerGroupQuestion(
+  question: string,
+  aggregateText: string,
+): Promise<string> {
+  const response = await client().messages.create({
+    model: TUTOR_MODEL,
+    max_tokens: 900,
+    system:
+      "You are a reading-practice assistant answering a parent's or teacher's question in a " +
+      "Telegram group. You support a child who practises reading with an assistive app for " +
+      "dyslexia/ADHD. The ONLY evidence you have is the session-statistics block in the message " +
+      "(counts of words read and re-read, stuck words, grapheme patterns, pacing, quiz results).\n\n" +
+      "RULES:\n" +
+      "- Answer the question directly, using the statistics as evidence. Quote specific words or " +
+      "numbers from the data when they support a point.\n" +
+      "- If the question asks for practice ideas or next steps, base them on the actual stuck " +
+      "words and grapheme patterns in the data — concrete, doable at home in a few minutes.\n" +
+      "- If the data cannot answer the question, say plainly what is not tracked and offer the " +
+      "closest thing you CAN report. Never invent numbers, sessions, or observations.\n" +
+      "- Report study patterns only: NEVER make emotional or clinical claims, never diagnose, " +
+      "never speculate about the child's feelings, ability, or conditions.\n\n" +
+      "FORMATTING (Telegram plain text — no Markdown):\n" +
+      "- No **, no ##, no backticks, no bullet dashes at line start.\n" +
+      "- Lead each short section with a relevant emoji and a Title Case label on its own line, " +
+      "then 1-3 short sentences. Keep it under about 200 words unless the question needs more.",
+    messages: [{ role: "user", content: `QUESTION: ${question}\n\n${aggregateText}` }],
+  });
+
+  return stripMarkdown(
+    response.content
+      .filter((b): b is Anthropic.TextBlock => b.type === "text")
+      .map((b) => b.text)
+      .join("")
+      .trim(),
+  );
+}
 
 /**
  * Classify a free-text group request aimed at the bot (item 5): decide
@@ -745,12 +849,20 @@ export async function classifyGroupRequest(text: string): Promise<GroupIntent> {
         "You route a message sent to a reading-practice assistant bot in a group chat. The bot " +
         "reports a child's reading-practice patterns (reads, re-reads, stuck words, pacing) over a " +
         "time window. Classify the user's request. Respond STRICT JSON only:\n" +
-        '{"action":"review","days":7} for any ask about how the child did / recent readings / ' +
-        "insights over a period (map 'today'→1, 'this week'/'past week'→7, 'this month'→30; default " +
-        "7 if unspecified);\n" +
-        '{"action":"report"} for the latest/most recent single session;\n' +
+        '{"action":"review","days":7} for a GENERAL "how did they do" summary over a period ' +
+        "(map 'today'→1, 'this week'/'past week'→7, 'this month'→30; default 7 if unspecified);\n" +
+        '{"action":"report"} ONLY when they explicitly ask for the latest/most recent SESSION ' +
+        '(e.g. "show me the last session", "latest session stats") — this returns a raw numbers ' +
+        "dump, so never use it for a question that deserves a written answer;\n" +
         '{"action":"help"} for what the bot can do;\n' +
-        '{"action":"other"} for anything unrelated to the child\'s reading practice.',
+        '{"action":"ask","days":7} for any OTHER question about this child\'s reading practice ' +
+        "that deserves a written answer — practice/exercise suggestions, insights or analysis, " +
+        "which words or letter patterns they struggle with, whether they are improving, what to " +
+        "do next, how they are doing based on their current status, comparisons over time. " +
+        "Use the same day mapping (default 7). When in doubt between 'ask' and 'report', choose " +
+        "'ask' — a written answer is always more useful than a numbers dump.\n" +
+        '{"action":"other"} ONLY for requests unrelated to the child\'s reading practice ' +
+        "(jokes, weather, general chit-chat, other topics).",
       messages: [{ role: "user", content: text.slice(0, 300) }],
     });
     const raw = response.content
@@ -761,10 +873,10 @@ export async function classifyGroupRequest(text: string): Promise<GroupIntent> {
       action?: string;
       days?: unknown;
     };
-    if (parsed.action === "review") {
-      const days = Number(parsed.days);
-      return { action: "review", days: Number.isFinite(days) && days > 0 ? Math.min(365, days) : 7 };
-    }
+    const days = Number(parsed.days);
+    const window = Number.isFinite(days) && days > 0 ? Math.min(365, days) : 7;
+    if (parsed.action === "review") return { action: "review", days: window };
+    if (parsed.action === "ask") return { action: "ask", days: window };
     if (parsed.action === "report") return { action: "report" };
     if (parsed.action === "help") return { action: "help" };
     return { action: "other" };

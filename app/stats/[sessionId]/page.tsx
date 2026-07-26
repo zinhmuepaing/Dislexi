@@ -41,6 +41,24 @@ const CHARTS = [
 
 type ChartKey = (typeof CHARTS)[number]["key"];
 
+/**
+ * Chart.js canvases are TRANSPARENT, and JPEG has no alpha channel — encoding
+ * one directly renders every transparent pixel BLACK, which is why the PDF
+ * charts came out on black. Composite onto white at the canvas's full backing
+ * resolution first, so the PDF matches what the dashboard shows.
+ */
+function chartJpegOnWhite(canvas: HTMLCanvasElement, jpegQuality: number): string {
+  const flat = document.createElement("canvas");
+  flat.width = canvas.width;
+  flat.height = canvas.height;
+  const ctx = flat.getContext("2d");
+  if (!ctx) return canvas.toDataURL("image/jpeg", jpegQuality);
+  ctx.fillStyle = "#ffffff";
+  ctx.fillRect(0, 0, flat.width, flat.height);
+  ctx.drawImage(canvas, 0, 0);
+  return flat.toDataURL("image/jpeg", jpegQuality);
+}
+
 export default function StatsPage() {
   const { sessionId } = useParams<{ sessionId: string }>();
   const canvasRefs = useRef<Partial<Record<ChartKey, HTMLCanvasElement | null>>>({});
@@ -217,7 +235,7 @@ export default function StatsPage() {
       y += 4;
       // JPEG (charts are flat color on white) — PNG at phone DPR made the
       // upload exceed Vercel's 4.5 MB body limit → 413 → "Delivery failed".
-      pdf.addImage(canvas.toDataURL("image/jpeg", jpegQuality), "JPEG", 14, y, imgW, imgH);
+      pdf.addImage(chartJpegOnWhite(canvas, jpegQuality), "JPEG", 14, y, imgW, imgH);
       y += imgH + 8;
     }
     return pdf;

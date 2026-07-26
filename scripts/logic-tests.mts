@@ -22,7 +22,7 @@ import {
   stepsFromStream,
 } from "../lib/tutor-model";
 import { buildSentences, buildParagraphs, blockToSentenceMap, localWordAt } from "../lib/sentences";
-import { fastParseCommand } from "../lib/voice-commands";
+import { fastParseCommand, isAffirmative } from "../lib/voice-commands";
 import { syllablesOf, coachingLines } from "../lib/syllables";
 import { similarity, saidWordMatches, bestWordMatch } from "../lib/text-match";
 import { buildLineMarks, buildWordMarks } from "../lib/marks";
@@ -729,6 +729,28 @@ const box = (l: number, t: number, r: number, b: number): [number, number][] => 
   assert.deepEqual(paragraphs[1].blockIndices, [1, 2, 3, 4]);
   // Ranges stay index-aligned to blocks so karaoke can hop lines.
   assert.equal(paragraphs[1].ranges.length, 4);
+}
+
+// ── isAffirmative: resume gate after a mid-explanation clarification ─────────
+{
+  // A yes resumes the paused explanation.
+  for (const yes of ["yes", "Yes.", "ok", "okay!", "got it", "I understand", "carry on", "continue", "keep going", "yep", "makes sense", "  sure  "]) {
+    assert.equal(isAffirmative(yes), true, `expected affirmative: ${yes}`);
+  }
+  // Anything else must NOT resume — it's another question, and the student
+  // getting an answer matters more than getting back on script.
+  for (const no of [
+    "what does perimeter mean",
+    "no",
+    "not really",
+    "no I don't get it",
+    "wait",
+    "can you say that again",
+    "why is it 12",
+    "",
+  ]) {
+    assert.equal(isAffirmative(no), false, `expected NOT affirmative: ${no}`);
+  }
 }
 
 // ── fastParseCommand: keyword fast-path before any LLM (amended rule 3) ──────
