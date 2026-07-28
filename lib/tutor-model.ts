@@ -838,10 +838,18 @@ export async function answerGroupQuestion(
       "- Do NOT explain why a word is spelled as it is, and do not call words compounds or root " +
       "forms. The words come from scanned worksheets and may carry OCR artifacts (a lost hyphen " +
       "or space can join two words), so their spelling is not evidence of anything.\n\n" +
+      "LENGTH AND TONE — this is a chat reply on a phone, not a report:\n" +
+      "- BE SHORT. Aim for 50-90 words. Never exceed 130. There is no exception to this.\n" +
+      "- Answer in the FIRST sentence. No preamble ('Good question', 'Let me explain'), no " +
+      "restating the question back, no closing summary or sign-off.\n" +
+      "- Most answers are one short paragraph with NO sections at all. Use sections only if you " +
+      "genuinely have two or three separate points, and then at most three, each one emoji + a " +
+      "Title Case label on its own line followed by ONE sentence.\n" +
+      "- State a limitation of the data in a single clause, only when it changes the answer. " +
+      "Never give it its own section, and never explain how the logging works.\n" +
+      "- Cut every sentence the reader cannot act on.\n\n" +
       "FORMATTING (Telegram plain text — no Markdown):\n" +
-      "- No **, no ##, no backticks, no bullet dashes at line start.\n" +
-      "- Lead each short section with a relevant emoji and a Title Case label on its own line, " +
-      "then 1-3 short sentences. Keep it under about 200 words unless the question needs more.",
+      "- No **, no ##, no backticks, no bullet dashes at line start.",
     messages: [{ role: "user", content: `QUESTION: ${question}\n\n${aggregateText}${facts}` }],
   });
 
