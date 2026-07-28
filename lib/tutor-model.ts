@@ -786,8 +786,11 @@ export type GroupIntent =
   | { action: "report" }
   | { action: "help" }
   /** Any other on-topic request answered freely from the child's data
-   *  ("what should they practise?", "which words trip them up?"). */
-  | { action: "ask"; days: number }
+   *  ("what should they practise?", "how do I help him with this word?").
+   *  `word` is set when the message is about ONE specific word, so the caller
+   *  can supply a DETERMINISTIC syllable split instead of letting the model
+   *  invent one (it produced "non + corr + osive" for noncorrosive). */
+  | { action: "ask"; days: number; word?: string }
   | { action: "other" };
 
 /**
@@ -800,7 +803,15 @@ export type GroupIntent =
 export async function answerGroupQuestion(
   question: string,
   aggregateText: string,
+  /** Deterministic syllable split for the word the question is about, from
+   *  lib/syllables.ts. Supplied as FACT so the model never invents one. */
+  wordBreakdown?: { word: string; syllables: string[] },
 ): Promise<string> {
+  const facts = wordBreakdown
+    ? `\n\nVERIFIED WORD BREAKDOWN (use EXACTLY this, do not alter it):\n` +
+      `${wordBreakdown.word} = ${wordBreakdown.syllables.join(" · ")}`
+    : "";
+
   const response = await client().messages.create({
     model: TUTOR_MODEL,
     max_tokens: 900,
@@ -818,11 +829,20 @@ export async function answerGroupQuestion(
       "closest thing you CAN report. Never invent numbers, sessions, or observations.\n" +
       "- Report study patterns only: NEVER make emotional or clinical claims, never diagnose, " +
       "never speculate about the child's feelings, ability, or conditions.\n\n" +
+      "WORDS AND SPELLING — this app teaches reading, so a wrong breakdown does real harm:\n" +
+      "- NEVER invent a syllable split, a phoneme breakdown, or a pronunciation. Only use a " +
+      "VERIFIED WORD BREAKDOWN if one is given to you below, copied exactly as written.\n" +
+      "- If you are asked to break down a word and no verified breakdown is supplied, say you " +
+      "cannot split that one reliably and point them to Stuck-Word Autopsy in the app, which " +
+      "sounds words out from a checked phonics table. Do not guess.\n" +
+      "- Do NOT explain why a word is spelled as it is, and do not call words compounds or root " +
+      "forms. The words come from scanned worksheets and may carry OCR artifacts (a lost hyphen " +
+      "or space can join two words), so their spelling is not evidence of anything.\n\n" +
       "FORMATTING (Telegram plain text — no Markdown):\n" +
       "- No **, no ##, no backticks, no bullet dashes at line start.\n" +
       "- Lead each short section with a relevant emoji and a Title Case label on its own line, " +
       "then 1-3 short sentences. Keep it under about 200 words unless the question needs more.",
-    messages: [{ role: "user", content: `QUESTION: ${question}\n\n${aggregateText}` }],
+    messages: [{ role: "user", content: `QUESTION: ${question}\n\n${aggregateText}${facts}` }],
   });
 
   return stripMarkdown(
@@ -855,14 +875,19 @@ export async function classifyGroupRequest(text: string): Promise<GroupIntent> {
         '(e.g. "show me the last session", "latest session stats") — this returns a raw numbers ' +
         "dump, so never use it for a question that deserves a written answer;\n" +
         '{"action":"help"} for what the bot can do;\n' +
-        '{"action":"ask","days":7} for any OTHER question about this child\'s reading practice ' +
-        "that deserves a written answer — practice/exercise suggestions, insights or analysis, " +
-        "which words or letter patterns they struggle with, whether they are improving, what to " +
-        "do next, how they are doing based on their current status, comparisons over time. " +
-        "Use the same day mapping (default 7). When in doubt between 'ask' and 'report', choose " +
-        "'ask' — a written answer is always more useful than a numbers dump.\n" +
-        '{"action":"other"} ONLY for requests unrelated to the child\'s reading practice ' +
-        "(jokes, weather, general chit-chat, other topics).",
+        '{"action":"ask","days":7,"word":"<word>"} for ANY other message about this child, ' +
+        "their reading, their difficulties, or HOW TO HELP THEM. This is the default for anything " +
+        "on-topic. It covers: practice and exercise suggestions; insights or analysis; which words " +
+        "or letter patterns they struggle with; whether they are improving; what to do next; how " +
+        "to help with a particular word; explaining a word's parts or how to sound it out; " +
+        "requests to explain, expand on, or go deeper on something already said. Use the same day " +
+        'mapping (default 7). Include "word" ONLY when the message is about one specific word — ' +
+        "copy that word as plain letters with no hyphens or spaces (so \"non-cor-ro-sive\" → " +
+        '"noncorrosive"); omit "word" otherwise.\n' +
+        '{"action":"other"} ONLY when the message has nothing to do with this child or their ' +
+        "reading — jokes, weather, sport, general chit-chat, unrelated topics. If the message " +
+        "mentions the child, a word they read, or asks for help/teaching of any kind, it is " +
+        "\"ask\", NOT \"other\". When unsure, choose \"ask\".",
       messages: [{ role: "user", content: text.slice(0, 300) }],
     });
     const raw = response.content
@@ -872,11 +897,18 @@ export async function classifyGroupRequest(text: string): Promise<GroupIntent> {
     const parsed = JSON.parse(raw.slice(raw.indexOf("{"), raw.lastIndexOf("}") + 1)) as {
       action?: string;
       days?: unknown;
+      word?: unknown;
     };
     const days = Number(parsed.days);
     const window = Number.isFinite(days) && days > 0 ? Math.min(365, days) : 7;
+    // A word is only useful if it is a plain alphabetic token — the caller
+    // feeds it to syllablesOf(), which operates on letters.
+    const word =
+      typeof parsed.word === "string" && /^[a-zA-Z]{2,}$/.test(parsed.word.replace(/[^a-zA-Z]/g, ""))
+        ? parsed.word.replace(/[^a-zA-Z]/g, "").toLowerCase()
+        : undefined;
     if (parsed.action === "review") return { action: "review", days: window };
-    if (parsed.action === "ask") return { action: "ask", days: window };
+    if (parsed.action === "ask") return { action: "ask", days: window, word };
     if (parsed.action === "report") return { action: "report" };
     if (parsed.action === "help") return { action: "help" };
     return { action: "other" };

@@ -16,6 +16,7 @@ import { supabase } from "@/lib/supabase";
 import { computeStats, statsToText, EventRow } from "@/lib/analytics";
 import { answerCallbackQuery, sendMessage, botUsername } from "@/lib/telegram";
 import { summarizeStudyPatterns, classifyGroupRequest, answerGroupQuestion } from "@/lib/tutor-model";
+import { syllablesOf } from "@/lib/syllables";
 
 export const runtime = "nodejs";
 export const maxDuration = 60;
@@ -103,6 +104,21 @@ export async function POST(req: NextRequest) {
   } catch (err) {
     // Log but still 200 — Telegram retries non-2xx aggressively.
     console.error("/api/telegram/webhook handler failed:", err);
+    // ...but NEVER go silent. A bot that says nothing is indistinguishable
+    // from a broken webhook: the asker cannot tell whether to retry, and the
+    // failure leaves no trace in the chat. Best effort — if even this send
+    // fails there is nothing further we can do.
+    const chatId = update.message?.chat.id ?? update.callback_query?.message?.chat.id;
+    if (chatId) {
+      try {
+        await sendMessage(
+          chatId,
+          "Sorry — something went wrong answering that. Please try again in a moment.",
+        );
+      } catch (sendErr) {
+        console.error("/api/telegram/webhook failure notice failed:", sendErr);
+      }
+    }
   }
 
   return NextResponse.json({ ok: true });
@@ -137,7 +153,7 @@ async function handleDirectMessage(chatId: number, text: string): Promise<void> 
         await handleReview(chatId, intent.days);
         break;
       case "ask":
-        await answerQuestion(chatId, text, intent.days);
+        await answerQuestion(chatId, text, intent.days, "", intent.word);
         break;
       case "report":
         await handleLatestReport(chatId);
@@ -197,7 +213,7 @@ async function handleGroupMessage(
       await handleReview(chatId, intent.days, `${tag} — `);
       break;
     case "ask":
-      await answerQuestion(chatId, request, intent.days, `${tag} — `);
+      await answerQuestion(chatId, request, intent.days, `${tag} — `, intent.word);
       break;
     case "report":
       await handleLatestReport(chatId, `${tag} — `);
@@ -225,11 +241,12 @@ async function answerQuestion(
   question: string,
   days: number,
   prefix = "",
+  word?: string,
 ): Promise<void> {
   const since = new Date(Date.now() - days * 24 * 60 * 60 * 1000).toISOString();
   const { data: events, error } = await supabase()
     .from("events")
-    .select("ts, type, word, grapheme, question_ref")
+    .select("ts, type, word, grapheme, question_ref, payload")
     .gte("ts", since)
     .lt("ts", new Date().toISOString())
     .order("ts", { ascending: true });
@@ -248,8 +265,14 @@ async function answerQuestion(
   }
 
   const aggregate = statsToText(computeStats(events as EventRow[]), `last ${days} days`);
+  // Word questions get a DETERMINISTIC split (same hyphenation table the
+  // Autopsy coaches from) — the model is forbidden to invent one, because it
+  // did: "noncorrosive" came back as "non + corr + osive" instead of
+  // non·cor·ro·sive.
+  const syllables = word ? syllablesOf(word) : [];
+  const breakdown = word && syllables.length > 1 ? { word, syllables } : undefined;
   try {
-    const answer = await answerGroupQuestion(question, aggregate);
+    const answer = await answerGroupQuestion(question, aggregate, breakdown);
     await sendMessage(chatId, prefix ? `${prefix}\n${answer}` : answer);
   } catch (err) {
     console.error("question answer failed:", err);
