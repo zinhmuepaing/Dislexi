@@ -204,6 +204,12 @@ export default function TutoringPage() {
   const linesRef = useRef<TutorLine[] | null>(null);
   const historyRef = useRef<TutorTurn[]>([]);
   const listenerRef = useRef<VoiceListener | null>(null);
+  /** A start is in flight — `listenerRef` is null across the await, so without
+   *  this a second tap begins a SECOND recognizer, and the free Speech tier
+   *  runs only one at a time. */
+  const micStarting = useRef(false);
+  /** Unmounted mid-start; don't leave a listener holding the microphone. */
+  const leftPage = useRef(false);
   // Streaming: steps arrive incrementally; the narration loop reads the latest.
   const stepsRef = useRef<TutorStep[]>([]);
   const streamDoneRef = useRef(false);
@@ -221,6 +227,9 @@ export default function TutoringPage() {
   const [thinkingLine, setThinkingLine] = useState(0);
   const [errorMsg, setErrorMsg] = useState<string | null>(null);
   const [listening, setListening] = useState(false);
+  /** Why the mic stopped. Separate from `errorMsg`, which asking a question
+   *  clears — a mic that cannot run is still true after the next question. */
+  const [micError, setMicError] = useState<string | null>(null);
   const [showText, setShowText] = useState(false); // text hidden by default (S7)
   /** Step index whose visual the student dismissed with the X. */
   const [dismissedVisual, setDismissedVisual] = useState<number | null>(null);
@@ -274,24 +283,34 @@ export default function TutoringPage() {
   }
 
   async function toggleMic() {
+    if (micStarting.current) return; // ignore taps while one is already starting
     if (listenerRef.current) {
       listenerRef.current.stop();
       listenerRef.current = null;
       setListening(false);
+      setMicError(null);
       return;
     }
+    micStarting.current = true;
     try {
-      listenerRef.current = await startVoiceListener({
+      const listener = await startVoiceListener({
         onUtterance: (t) => void handleUtterance(t),
         onState: setListening,
+        onFailure: setMicError,
       });
+      if (leftPage.current) {
+        listener.stop();
+        return;
+      }
+      listenerRef.current = listener;
+      setMicError(null);
     } catch (err) {
       // Was a bare `catch {}`: the mic flipped back to off with no explanation
-      // at all, which is why a missing server key looked like a broken button.
+      // at all, which is why a dead engine looked like a dead button.
       setListening(false);
-      setErrorMsg(
-        `${err instanceof Error ? err.message : "Mic unavailable."} You can still type your question.`,
-      );
+      setMicError(err instanceof Error ? err.message : "Mic unavailable.");
+    } finally {
+      micStarting.current = false;
     }
   }
 
@@ -413,6 +432,7 @@ export default function TutoringPage() {
     SessionLogger.start("tutoring").then((l) => (logger.current = l));
     const micStart = setTimeout(() => void toggleMic(), 0);
     return () => {
+      leftPage.current = true;
       clearTimeout(micStart);
       listenerRef.current?.stop();
       listenerRef.current = null;
@@ -839,6 +859,14 @@ export default function TutoringPage() {
       <div className="absolute inset-x-0 bottom-0 z-10">
         <div className="tool-sheet mx-auto flex max-h-[54dvh] max-w-md flex-col gap-2 rounded-t-[22px] px-4 pb-[max(16px,env(safe-area-inset-bottom))] pt-3">
           <div className="mx-auto h-1 w-9 shrink-0 rounded-full bg-[var(--ink)] opacity-20" aria-hidden />
+          {micError && (
+            <div
+              role="status"
+              className="fadein shrink-0 rounded-[10px] border-[1.5px] border-[var(--coral-deep)] bg-[color-mix(in_srgb,var(--coral)_12%,var(--paper-card))] p-2.5 text-[13px] leading-snug"
+            >
+              {micError} You can still type your question — tap the mic to retry.
+            </div>
+          )}
           {errorMsg && !busy && (
             <div className="fadein rounded-[10px] border-[1.5px] border-[var(--coral-deep)] bg-[color-mix(in_srgb,var(--coral)_12%,var(--paper-card))] p-2.5 text-sm">
               {errorMsg}

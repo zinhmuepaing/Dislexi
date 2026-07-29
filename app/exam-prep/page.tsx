@@ -149,6 +149,13 @@ export default function ExamPrepPage() {
   const scanningRef = useRef(false);
   const lastReadRef = useRef<Sentence | null>(null);
   const listenerRef = useRef<VoiceListener | null>(null);
+  /** A start is in flight. `listenerRef` is null across that await, so without
+   *  this a second tap begins a SECOND recognizer — and the free Speech tier
+   *  runs only one at a time, so the two fight and the button flickers. */
+  const micStarting = useRef(false);
+  /** Unmounted while a start was in flight; the listener must not be left
+   *  holding the microphone (and the tier's only slot) behind us. */
+  const leftPage = useRef(false);
   const autoScanTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
 
   const [scan, setScan] = useState<Scan | null>(null);
@@ -394,6 +401,7 @@ export default function ExamPrepPage() {
   }
 
   async function toggleMic() {
+    if (micStarting.current) return; // ignore taps while one is already starting
     if (listenerRef.current) {
       listenerRef.current.stop();
       listenerRef.current = null;
@@ -401,15 +409,24 @@ export default function ExamPrepPage() {
       setMicError(null);
       return;
     }
+    micStarting.current = true;
     try {
-      listenerRef.current = await startVoiceListener({
+      const listener = await startVoiceListener({
         onUtterance: (t) => void handleUtterance(t),
         onState: setListening,
+        onFailure: setMicError,
       });
+      if (leftPage.current) {
+        listener.stop();
+        return;
+      }
+      listenerRef.current = listener;
       setMicError(null);
     } catch (err) {
       setListening(false);
       setMicError(err instanceof Error ? err.message : "Mic unavailable.");
+    } finally {
+      micStarting.current = false;
     }
   }
 
@@ -431,6 +448,7 @@ export default function ExamPrepPage() {
     const micStart = setTimeout(() => void toggleMic(), 0);
 
     return () => {
+      leftPage.current = true;
       clearTimeout(scopeRestore);
       clearTimeout(micStart);
       listenerRef.current?.stop();

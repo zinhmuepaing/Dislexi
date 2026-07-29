@@ -130,6 +130,12 @@ export default function AutopsyPage() {
   const practiceRef = useRef<PracticedWord[]>([]);
   const sweepRef = useRef<Playback | null>(null);
   const listenerRef = useRef<VoiceListener | null>(null);
+  /** A start is in flight — `listenerRef` is null across the await, so without
+   *  this a second tap begins a SECOND recognizer, and the free Speech tier
+   *  runs only one at a time. */
+  const micStarting = useRef(false);
+  /** Unmounted mid-start; don't leave a listener holding the microphone. */
+  const leftPage = useRef(false);
   const autoScanTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
   const quizRef = useRef<QuizState | null>(null);
   const answerWindowRef = useRef<{ target: string } | null>(null);
@@ -175,6 +181,7 @@ export default function AutopsyPage() {
     SessionLogger.start("autopsy").then((l) => (logger.current = l));
     const micStart = setTimeout(() => void toggleMic(), 0);
     return () => {
+      leftPage.current = true;
       clearTimeout(micStart);
       listenerRef.current?.stop();
       listenerRef.current = null;
@@ -421,6 +428,7 @@ export default function AutopsyPage() {
   }
 
   async function toggleMic() {
+    if (micStarting.current) return; // ignore taps while one is already starting
     if (listenerRef.current) {
       listenerRef.current.stop();
       listenerRef.current = null;
@@ -428,15 +436,24 @@ export default function AutopsyPage() {
       setMicError(null);
       return;
     }
+    micStarting.current = true;
     try {
-      listenerRef.current = await startVoiceListener({
+      const listener = await startVoiceListener({
         onUtterance: (t) => void handleUtterance(t),
         onState: setListening,
+        onFailure: setMicError,
       });
+      if (leftPage.current) {
+        listener.stop();
+        return;
+      }
+      listenerRef.current = listener;
       setMicError(null);
     } catch (err) {
       setListening(false);
       setMicError(err instanceof Error ? err.message : "Mic unavailable.");
+    } finally {
+      micStarting.current = false;
     }
   }
 
