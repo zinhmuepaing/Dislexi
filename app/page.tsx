@@ -46,8 +46,12 @@ export default function ModeSelector() {
   };
 
   return (
-    <main className="home-shell mx-auto min-h-dvh w-full max-w-6xl px-4 pb-28 pt-4 sm:px-6 lg:px-8 lg:pt-6">
-      <header className="mb-4 flex items-center justify-between gap-3">
+    // One screenful: the dashboard fills the viewport instead of running off
+    // the bottom of it, so nothing needs scrolling to be seen. `overflow-y-auto`
+    // rather than `hidden` is deliberate — if a student has browser text scaling
+    // turned up, the content must still be reachable rather than clipped away.
+    <main className="home-shell mx-auto flex h-dvh w-full max-w-6xl flex-col gap-2 overflow-y-auto px-4 pb-[calc(78px+env(safe-area-inset-bottom))] pt-2 sm:gap-3 sm:px-6 sm:pt-3 lg:px-8 lg:pt-5">
+      <header className="flex shrink-0 items-center justify-between gap-3">
         <div className="flex min-w-0 items-center gap-3">
           <BrandMark />
           <div className="min-w-0">
@@ -73,17 +77,19 @@ export default function ModeSelector() {
         // Distinct from the Scan button's "Start a session": two controls that
         // open the same sheet must still be tellable apart by ear.
         aria-label="Live read-along demo — start a session"
-        className="paper-card home-readalong press relative mb-4 block w-full overflow-hidden p-4 text-left sm:p-5"
+        className="paper-card home-readalong press relative block w-full shrink-0 overflow-hidden p-2.5 text-left sm:p-5"
       >
         <span className="relative z-10 block max-w-[78%] sm:max-w-none">
-          <span className="mb-2 flex items-center gap-2">
+          <span className="mb-1 flex items-center gap-2 sm:mb-2">
             <span className="paper-icon paper-icon-coral">
               <Sparkles size={16} aria-hidden />
             </span>
             <span className="paper-kicker">Live read-along</span>
           </span>
           <span
-            className="font-display block text-lg font-bold leading-relaxed sm:text-xl"
+            // leading-normal (1.5), not relaxed: the type SIZE is untouched, and
+            // 1.5 is still within dyslexia-friendly line-spacing guidance.
+            className="font-display block text-lg font-bold leading-normal sm:text-xl sm:leading-relaxed"
             aria-hidden
           >
             {KARAOKE_WORDS.map((word, index) => (

@@ -95,29 +95,34 @@ export function PracticeSummary() {
 
   if (!stats && !failed) {
     return (
-      <section aria-label="Your practice" aria-busy="true">
-        <div className="mb-2 h-4 w-32 animate-pulse rounded bg-[var(--line)]" />
-        <div className="grid grid-cols-2 gap-3 lg:grid-cols-4">
+      <section
+        aria-label="Your practice"
+        aria-busy="true"
+        className="flex min-h-0 flex-1 flex-col gap-1.5 sm:gap-3"
+      >
+        <div className="h-4 w-32 shrink-0 animate-pulse rounded bg-[var(--line)]" />
+        <div className="grid shrink-0 grid-cols-4 gap-2 sm:gap-3">
           {[0, 1, 2, 3].map((item) => (
             <div
               key={item}
-              className="paper-card h-32 animate-pulse bg-[var(--paper-card)]"
+              className="paper-card h-20 animate-pulse bg-[var(--paper-card)] sm:h-32"
               aria-hidden
             />
           ))}
         </div>
+        <div className="paper-card min-h-0 flex-1 animate-pulse bg-[var(--paper-card)]" aria-hidden />
       </section>
     );
   }
 
   if (failed || !stats || stats.totalEvents === 0) {
     return (
-      <section aria-label="Your practice">
-        <div className="mb-3 flex items-center justify-between">
+      <section aria-label="Your practice" className="flex min-h-0 flex-1 flex-col gap-1.5 sm:gap-3">
+        <div className="flex shrink-0 items-center justify-between">
           <h2 className="paper-section-title">Your practice</h2>
           <span className="paper-kicker">Last {DAYS} days</span>
         </div>
-        <div className="paper-card flex min-h-64 flex-col items-center justify-center gap-3 p-6 text-center">
+        <div className="paper-card flex min-h-0 flex-1 flex-col items-center justify-center gap-3 p-6 text-center">
           <span className="paper-illustration">
             <BookOpenText size={42} aria-hidden />
           </span>
@@ -154,8 +159,13 @@ export function PracticeSummary() {
   const maxWordCount = Math.max(...topWords.map((word) => word.count), 1);
 
   return (
-    <section aria-label="Your practice">
-      <div className="mb-3 flex items-center justify-between gap-3">
+    // Fills the height it is given rather than running past the fold: the two
+    // blocks below the title share the leftover space (2 parts tiles, 3 parts
+    // chart), so the same markup fits an iPhone SE and a desktop without
+    // anything being dropped. Every `min-h-0` is load-bearing — without it a
+    // flex child refuses to shrink below its content and the overflow returns.
+    <section aria-label="Your practice" className="flex min-h-0 flex-1 flex-col gap-1.5 sm:gap-3">
+      <div className="flex shrink-0 items-center justify-between gap-3">
         <div>
           <p className="paper-kicker">Dashboard</p>
           <h2 className="paper-section-title">Your practice</h2>
@@ -165,32 +175,46 @@ export function PracticeSummary() {
         </Link>
       </div>
 
-      <div className="grid grid-cols-2 gap-3 lg:grid-cols-4">
+      {/* One row rather than 2x2: the second row costs ~100px, which is most of
+          what a small phone is short by. Column count follows the tile count, so
+          two tiles share the row rather than leaving half of it empty. */}
+      <div
+        className="grid shrink-0 gap-2 sm:gap-3"
+        style={{ gridTemplateColumns: `repeat(${tiles.length}, minmax(0,1fr))` }}
+      >
         {tiles.map((tile) => (
           <article key={tile.label} className={`metric-card metric-${tile.tone}`}>
             <span className="metric-icon" aria-hidden>
               <tile.Icon size={18} strokeWidth={2.1} />
             </span>
-            <strong className="font-display mt-3 text-3xl font-extrabold leading-none">
+            <strong className="font-display mt-1 text-2xl font-extrabold leading-none sm:mt-3 sm:text-3xl">
               {tile.value}
             </strong>
-            <span className="paper-kicker mt-2">{tile.label}</span>
+            <span className="paper-kicker mt-0.5 sm:mt-2">{tile.label}</span>
           </article>
         ))}
       </div>
 
-      <div className="mt-3 grid gap-3 lg:grid-cols-[minmax(0,1.7fr)_minmax(240px,0.8fr)]">
-        <article className="paper-card p-4 sm:p-5">
-          <div className="mb-4 flex items-center justify-between">
-            <div>
+      {/* Chart beside the notes at EVERY width, not just lg. Stacked, the two
+          together need ~250px more than a small phone has to give. */}
+      <div className="grid min-h-0 flex-1 grid-cols-[minmax(0,1.5fr)_minmax(0,1fr)] gap-2 sm:gap-3 lg:grid-cols-[minmax(0,1.7fr)_minmax(240px,0.8fr)]">
+        <article className="paper-card flex min-h-0 flex-col p-3 sm:p-5">
+          <div className="mb-2 flex shrink-0 items-center justify-between gap-2 sm:mb-4">
+            <div className="min-w-0">
               <p className="paper-kicker">Word chart</p>
-              <h3 className="font-display text-base font-extrabold">Most-requested words</h3>
+              {/* Must stay on ONE line in the narrow column — wrapping it costs
+                  ~19px, which is a whole chart row. */}
+              <h3 className="font-display text-[13px] font-extrabold leading-tight sm:text-base">
+                Most-requested words
+              </h3>
             </div>
-            <Puzzle size={20} className="text-[var(--green-deep)]" aria-hidden />
+            <Puzzle size={18} className="shrink-0 text-[var(--green-deep)] sm:size-5" aria-hidden />
           </div>
 
           {topWords.length > 0 ? (
-            <div className="space-y-3">
+            // justify-start, not between: with only one or two recorded words,
+            // "between" flings them to opposite ends of the card.
+            <div className="flex min-h-0 flex-1 flex-col justify-start gap-1 sm:gap-3">
               {topWords.map((word) => (
                 <div key={word.word} className="word-chart-row">
                   <span className="word-chart-label text-sm font-medium" title={word.word}>
@@ -208,30 +232,30 @@ export function PracticeSummary() {
               ))}
             </div>
           ) : (
-            <div className="flex min-h-36 items-center justify-center text-sm text-[var(--muted-ink)]">
+            <div className="flex min-h-0 flex-1 items-center justify-center text-center text-sm text-[var(--muted-ink)]">
               No tricky words recorded
             </div>
           )}
         </article>
 
-        <div className="grid grid-cols-2 gap-3 lg:grid-cols-1">
-          <article className="paper-card paper-note paper-note-yellow flex flex-col justify-between p-4">
-            <div className="flex items-center justify-between">
+        <div className="grid min-h-0 grid-rows-2 gap-2 sm:gap-3">
+          <article className="paper-card paper-note paper-note-yellow flex min-h-0 flex-col justify-between p-2.5 sm:p-4">
+            <div className="flex items-center justify-between gap-1">
               <span className="paper-icon paper-icon-yellow">
                 <Target size={18} aria-hidden />
               </span>
               <span className="paper-kicker">{checkpointProgress}%</span>
             </div>
-            <div className="mt-5">
+            <div>
               <p className="paper-kicker">Next checkpoint</p>
-              <p className="font-display mt-1 text-xl font-extrabold">
+              <p className="font-display mt-0.5 text-lg font-extrabold sm:mt-1 sm:text-xl">
                 {readCount}{" "}
                 <span className="text-sm font-medium text-[var(--muted-ink)]">
                   / {nextCheckpoint}
                 </span>
               </p>
               <div
-                className="paper-progress mt-3"
+                className="paper-progress mt-1.5 sm:mt-3"
                 role="progressbar"
                 aria-label="Progress to next reading checkpoint"
                 aria-valuemin={0}
@@ -243,16 +267,16 @@ export function PracticeSummary() {
             </div>
           </article>
 
-          <article className="paper-card paper-note paper-note-purple flex flex-col justify-between p-4">
+          <article className="paper-card paper-note paper-note-purple flex min-h-0 flex-col justify-between p-2.5 sm:p-4">
             <span className="paper-icon paper-icon-purple">
               <Gauge size={18} aria-hidden />
             </span>
-            <div className="mt-5">
+            <div>
               <p className="paper-kicker">Practice rhythm</p>
-              <p className="font-display mt-1 text-xl font-extrabold">
+              <p className="font-display mt-0.5 text-lg font-extrabold sm:mt-1 sm:text-xl">
                 {stats.medianGapSeconds === null ? "—" : `${stats.medianGapSeconds}s`}
               </p>
-              <p className="mt-1 text-xs text-[var(--muted-ink)]">
+              <p className="mt-0.5 text-[11px] leading-tight text-[var(--muted-ink)] sm:mt-1 sm:text-xs">
                 Typical gap between actions
               </p>
             </div>

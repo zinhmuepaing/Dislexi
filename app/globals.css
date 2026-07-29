@@ -403,6 +403,27 @@ body::before {
   box-shadow: var(--paper-shadow);
 }
 
+/* Home only — /insights and /stats share this tile and still scroll normally.
+   On the home page the grid hands each tile a share of the viewport, and a
+   132px floor taller than that share is what pushed the page past the fold. */
+.home-shell .metric-card {
+  min-height: 0;
+  justify-content: center;
+}
+
+@media (max-width: 639px) {
+  .home-shell .metric-card {
+    padding: 10px 6px 10px 12px;
+  }
+
+  /* Four tiles across a small phone leaves ~63px of text width, and a
+     tracked-out "QUESTIONS" does not fit that. Tighten rather than truncate. */
+  .home-shell .metric-card .paper-kicker {
+    letter-spacing: 0.03em;
+    overflow-wrap: anywhere;
+  }
+}
+
 .metric-card::before {
   content: "";
   position: absolute;
@@ -421,6 +442,13 @@ body::before {
   border: 1.5px solid currentColor;
   border-radius: var(--radius-small);
   background: rgba(255, 253, 247, 0.58);
+}
+
+@media (max-width: 639px) {
+  .home-shell .metric-icon {
+    height: 27px;
+    width: 27px;
+  }
 }
 
 .metric-coral {
@@ -483,10 +511,8 @@ body::before {
   transition: width 0.35s ease;
 }
 
-.paper-note {
-  min-height: 164px;
-}
-
+/* .paper-note carries no height of its own: it takes its share from the home
+   grid. Its old 164px floor is what pushed the desktop layout past the fold. */
 .paper-note-yellow {
   background:
     linear-gradient(145deg, rgba(244, 199, 91, 0.2), transparent 64%),
@@ -515,10 +541,14 @@ body::before {
   background: var(--green);
 }
 
+/* Narrow phones: the chart shares its row with the note cards, so the label
+   gets its own line above the bar rather than being squeezed beside it — the
+   words must never break mid-word for a dyslexic reader. Compact, because
+   five of these rows have to fit the height the grid allots them. */
 @media (max-width: 420px) {
   .word-chart-row {
-    grid-template-columns: minmax(0, 1fr) 24px;
-    gap: 6px 10px;
+    grid-template-columns: minmax(0, 1fr) 20px;
+    gap: 3px 8px;
   }
 
   .word-chart-row > strong {
@@ -530,6 +560,11 @@ body::before {
   .word-chart-track {
     grid-column: 1 / -1;
     grid-row: 2;
+    height: 11px;
+  }
+
+  .word-chart-label {
+    line-height: 1.2;
   }
 }
 
