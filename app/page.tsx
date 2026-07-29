@@ -55,7 +55,9 @@ export default function ModeSelector() {
         <div className="flex min-w-0 items-center gap-3">
           <BrandMark />
           <div className="min-w-0">
-            <h1 className="font-display truncate text-xl font-extrabold tracking-tight sm:text-2xl">
+            {/* leading-8: OpenDyslexic's glyphs are taller than text-xl's default
+                line box, so truncate's overflow:hidden was clipping ~4px off it. */}
+            <h1 className="font-display truncate text-xl font-extrabold leading-8 tracking-tight sm:text-2xl sm:leading-10">
               Dislexi
             </h1>
             <p className="paper-kicker">Learning notebook</p>
@@ -79,7 +81,10 @@ export default function ModeSelector() {
         aria-label="Live read-along demo — start a session"
         className="paper-card home-readalong press relative block w-full shrink-0 overflow-hidden p-2.5 text-left sm:p-5"
       >
-        <span className="relative z-10 block max-w-[78%] sm:max-w-none">
+        {/* Wider on small screens than the old 78%: OpenDyslexic is a much wider
+            face, and at 78% this sentence wrapped to FOUR lines on an iPhone SE
+            (54px -> 108px), which starved the chart below it of a whole row. */}
+        <span className="relative z-10 block max-w-[88%] sm:max-w-none">
           <span className="mb-1 flex items-center gap-2 sm:mb-2">
             <span className="paper-icon paper-icon-coral">
               <Sparkles size={16} aria-hidden />
@@ -123,7 +128,7 @@ export default function ModeSelector() {
         <LottieBadge
           as="span"
           src="/lottie/pointer-bounce.json"
-          className="pointer-events-none absolute -bottom-1 right-1 h-20 w-20 sm:right-4 sm:h-24 sm:w-24"
+          className="pointer-events-none absolute -bottom-1 right-1 h-14 w-14 sm:right-4 sm:h-24 sm:w-24"
         />
       </button>
 

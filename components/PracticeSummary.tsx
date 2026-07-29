@@ -197,9 +197,12 @@ export function PracticeSummary() {
 
       {/* Chart beside the notes at EVERY width, not just lg. Stacked, the two
           together need ~250px more than a small phone has to give. */}
-      <div className="grid min-h-0 flex-1 grid-cols-[minmax(0,1.5fr)_minmax(0,1fr)] gap-2 sm:gap-3 lg:grid-cols-[minmax(0,1.7fr)_minmax(240px,0.8fr)]">
+      {/* Capped: these cards fill the height they are given, but on an unusually
+          tall window "all of it" means 176px between chart rows. Past ~480px the
+          surplus is better left as breathing room than poured into the gaps. */}
+      <div className="grid max-h-[480px] min-h-0 flex-1 grid-cols-[minmax(0,1.5fr)_minmax(0,1fr)] gap-2 sm:gap-3 lg:grid-cols-[minmax(0,1.7fr)_minmax(240px,0.8fr)]">
         <article className="paper-card flex min-h-0 flex-col p-3 sm:p-5">
-          <div className="mb-2 flex shrink-0 items-center justify-between gap-2 sm:mb-4">
+          <div className="mb-1 flex shrink-0 items-center justify-between gap-2 sm:mb-4">
             <div className="min-w-0">
               <p className="paper-kicker">Word chart</p>
               {/* Must stay on ONE line in the narrow column — wrapping it costs
@@ -212,9 +215,14 @@ export function PracticeSummary() {
           </div>
 
           {topWords.length > 0 ? (
-            // justify-start, not between: with only one or two recorded words,
-            // "between" flings them to opposite ends of the card.
-            <div className="flex min-h-0 flex-1 flex-col justify-start gap-1 sm:gap-3">
+            // Spread the rows down the card so they use its height — but only
+            // from three up. With one or two recorded words "between" flings
+            // them to opposite ends with a void between.
+            <div
+              className={`flex min-h-0 flex-1 flex-col gap-0.5 sm:gap-3 ${
+                topWords.length >= 3 ? "justify-between" : "justify-start"
+              }`}
+            >
               {topWords.map((word) => (
                 <div key={word.word} className="word-chart-row">
                   <span className="word-chart-label text-sm font-medium" title={word.word}>
@@ -239,7 +247,10 @@ export function PracticeSummary() {
         </article>
 
         <div className="grid min-h-0 grid-rows-2 gap-2 sm:gap-3">
-          <article className="paper-card paper-note paper-note-yellow flex min-h-0 flex-col justify-between p-2.5 sm:p-4">
+          {/* justify-center, not between: "between" pins the icon to the top and
+              the content to the bottom, so on a tall tile all the slack pools
+              into one gap down the middle. Centred, it spreads to the edges. */}
+          <article className="paper-card paper-note paper-note-yellow flex min-h-0 flex-col justify-center gap-2 p-2.5 sm:gap-3 sm:p-4">
             <div className="flex items-center justify-between gap-1">
               <span className="paper-icon paper-icon-yellow">
                 <Target size={18} aria-hidden />
@@ -248,9 +259,9 @@ export function PracticeSummary() {
             </div>
             <div>
               <p className="paper-kicker">Next checkpoint</p>
-              <p className="font-display mt-0.5 text-lg font-extrabold sm:mt-1 sm:text-xl">
+              <p className="font-display note-value mt-0.5 font-extrabold sm:mt-1">
                 {readCount}{" "}
-                <span className="text-sm font-medium text-[var(--muted-ink)]">
+                <span className="note-value-sub font-medium text-[var(--muted-ink)]">
                   / {nextCheckpoint}
                 </span>
               </p>
@@ -267,16 +278,16 @@ export function PracticeSummary() {
             </div>
           </article>
 
-          <article className="paper-card paper-note paper-note-purple flex min-h-0 flex-col justify-between p-2.5 sm:p-4">
+          <article className="paper-card paper-note paper-note-purple flex min-h-0 flex-col justify-center gap-2 p-2.5 sm:gap-3 sm:p-4">
             <span className="paper-icon paper-icon-purple">
               <Gauge size={18} aria-hidden />
             </span>
             <div>
               <p className="paper-kicker">Practice rhythm</p>
-              <p className="font-display mt-0.5 text-lg font-extrabold sm:mt-1 sm:text-xl">
+              <p className="font-display note-value mt-0.5 font-extrabold sm:mt-1">
                 {stats.medianGapSeconds === null ? "—" : `${stats.medianGapSeconds}s`}
               </p>
-              <p className="mt-0.5 text-[11px] leading-tight text-[var(--muted-ink)] sm:mt-1 sm:text-xs">
+              <p className="note-caption mt-0.5 text-[var(--muted-ink)] sm:mt-1">
                 Typical gap between actions
               </p>
             </div>

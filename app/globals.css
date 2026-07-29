@@ -512,7 +512,26 @@ body::before {
 }
 
 /* .paper-note carries no height of its own: it takes its share from the home
-   grid. Its old 164px floor is what pushed the desktop layout past the fold. */
+   grid. Its old 164px floor is what pushed the desktop layout past the fold.
+
+   Its text scales with that share instead of leaving a pool of blank space in
+   the middle of a tall tile: dvh-based, so an iPhone SE lands on the minimum
+   (exactly the old size, and it still has to fit) while a tall phone gets a
+   big, readable number. Clamped at both ends so it can never run away. */
+.note-value {
+  font-size: clamp(1.125rem, 2.6dvh, 2.25rem);
+  line-height: 1.15;
+}
+
+.note-value-sub {
+  font-size: clamp(0.8125rem, 1.5dvh, 1.125rem);
+}
+
+.note-caption {
+  font-size: clamp(0.6875rem, 1.2dvh, 0.875rem);
+  line-height: 1.3;
+}
+
 .paper-note-yellow {
   background:
     linear-gradient(145deg, rgba(244, 199, 91, 0.2), transparent 64%),
@@ -548,7 +567,7 @@ body::before {
 @media (max-width: 420px) {
   .word-chart-row {
     grid-template-columns: minmax(0, 1fr) 20px;
-    gap: 3px 8px;
+    gap: 2px 8px;
   }
 
   .word-chart-row > strong {
@@ -560,11 +579,13 @@ body::before {
   .word-chart-track {
     grid-column: 1 / -1;
     grid-row: 2;
-    height: 11px;
+    height: 10px;
   }
 
+  /* Single-line labels, so a tight leading costs no readability — and five of
+     these rows have to clear the raised Scan button on an iPhone SE. */
   .word-chart-label {
-    line-height: 1.2;
+    line-height: 1.1;
   }
 }
 
