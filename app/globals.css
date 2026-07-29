@@ -367,6 +367,30 @@ body::before {
   box-shadow: 2px 2px 0 rgba(38, 55, 70, 0.12);
 }
 
+/* Tap sweep on the home read-along card: each word gets its OWN skewed marker
+   stroke, staggered left to right, rather than one stroke across the line —
+   the sentence wraps on a phone, and a single stroke would cut diagonally
+   across both lines. Per-word, wrapping costs nothing.
+   The stroke sits behind the text via z-index: -1, which is safe because the
+   card's inner wrapper is `relative z-10` and so bounds the stacking context. */
+.karaoke-swipe {
+  position: relative;
+}
+.karaoke-swipe::before {
+  content: "";
+  position: absolute;
+  left: -3px;
+  right: -3px;
+  bottom: 6%;
+  height: 52%;
+  background: var(--hl);
+  border-radius: 3px;
+  z-index: -1;
+  transform: skewX(-8deg) scaleX(0);
+  transform-origin: left;
+  animation: swipe 0.18s ease-out var(--mark-delay, 0ms) forwards;
+}
+
 .metric-card {
   position: relative;
   display: flex;
@@ -834,6 +858,105 @@ body::before {
 
 .fadein {
   animation: fadein 0.35s ease;
+}
+
+/* Counting visuals (VisualCard unitGrid). Driven by CSS rather than rAF so a
+   400-square grid costs nothing to animate, and so the reduced-motion rule at
+   the bottom of this file switches the movement off for free — the counting
+   ORDER survives (the delays are untouched), only the motion goes.
+   Timings come from lib/tutor-visual.ts; the component sets them per element. */
+
+/* A square being counted for the first time: its fill lands with a pop. The
+   outline is already there, so the student sees how many are coming. */
+@keyframes vc-count-in {
+  0% {
+    fill-opacity: 0;
+    transform: scale(1);
+  }
+  35% {
+    fill-opacity: 1;
+    transform: scale(1.22) rotate(-6deg);
+  }
+  60% {
+    transform: scale(1.1) rotate(5deg);
+  }
+  80% {
+    transform: scale(1.03) rotate(-2.5deg);
+  }
+  100% {
+    fill-opacity: 1;
+    transform: scale(1) rotate(0deg);
+  }
+}
+
+/* A square being counted AGAIN (after a join): it is already filled, so only
+   the pop and wobble replay — re-fading it would read as it disappearing. */
+@keyframes vc-count-again {
+  0% {
+    transform: scale(1);
+  }
+  35% {
+    transform: scale(1.22) rotate(-6deg);
+  }
+  60% {
+    transform: scale(1.1) rotate(5deg);
+  }
+  80% {
+    transform: scale(1.03) rotate(-2.5deg);
+  }
+  100% {
+    transform: scale(1) rotate(0deg);
+  }
+}
+
+.vc-square {
+  /* Without fill-box the pop would scale about the SVG origin and the square
+     would fly across the picture instead of growing in place. */
+  transform-box: fill-box;
+  transform-origin: center;
+}
+
+/* The two groups closing the gap between them. */
+@keyframes vc-join {
+  from {
+    transform: translateX(var(--vc-dx));
+  }
+  to {
+    transform: translateX(0);
+  }
+}
+/* …and the picture re-centring as it narrows, so it does not drift left. */
+@keyframes vc-recentre {
+  from {
+    transform: translateX(0);
+  }
+  to {
+    transform: translateX(var(--vc-recentre));
+  }
+}
+
+/* The "+" and the parts' own totals: only while the groups are still apart. */
+@keyframes vc-transient {
+  0% {
+    opacity: 0;
+  }
+  22% {
+    opacity: 1;
+  }
+  45% {
+    opacity: 1;
+  }
+  88%,
+  100% {
+    opacity: 0;
+  }
+}
+
+/* Once counted, the parts stop being 3-and-4 and become one lot of 7. */
+@keyframes vc-unify {
+  to {
+    fill: var(--vc-unify);
+  }
 }
 
 /* "AI thinking" dots (tutoring). */

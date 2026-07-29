@@ -28,11 +28,17 @@ import { similarity, saidWordMatches, bestWordMatch } from "../lib/text-match";
 import { buildLineMarks, buildWordMarks } from "../lib/marks";
 import { attemptPointing } from "../lib/quiz-point";
 import {
+  buildCountingScene,
+  countDurationMs,
+  countedSquares,
+  countStepMs,
   isInteractiveVisual,
   minOnScreenMs,
   parseVisual,
   ratioValue,
   startVisualHold,
+  COUNT_BEAT_MAX_MS,
+  COUNT_TOTAL_MAX_MS,
   VISUAL_ANIM_DELAY_MS,
   VISUAL_ANIM_MS,
   type FoldTriangleSpec,
@@ -317,6 +323,102 @@ const box = (l: number, t: number, r: number, b: number): [number, number][] => 
   const waited = await hold2(fold);
   assert.ok(waited > 0 && waited <= minOnScreenMs(fold),
     `a short sentence must be topped up, waited ${waited}`);
+}
+
+// ── counting scenes: grids accumulate, and only really-tiling parts join ─────
+{
+  const grid = (...gs: [number, number][]) =>
+    parseVisual({ kind: "unitGrid", grids: gs.map(([rows, cols]) => ({ rows, cols })) }) as UnitGridSpec;
+  const row = (cols: number) => grid([1, cols]);
+
+  // One step on its own is just its own grids — the old behaviour, unchanged.
+  const solo = buildCountingScene([row(3)])!;
+  assert.deepEqual(solo.groups, [{ rows: 1, cols: 3 }]);
+  assert.equal(solo.settled, 0);
+  assert.equal(solo.merge, false);
+  assert.equal(countedSquares(solo), 3);
+
+  // THE BUG THIS FIXES: the 3 must still be there when the 4 arrives, and only
+  // the 4 is counted — the 3 was counted in its own step.
+  const both = buildCountingScene([row(3), row(4)])!;
+  assert.deepEqual(both.groups, [{ rows: 1, cols: 3 }, { rows: 1, cols: 4 }]);
+  assert.equal(both.settled, 1);
+  assert.equal(both.merge, false);
+  assert.equal(countedSquares(both), 4);
+
+  // …and the step that IS the total joins them instead of replacing them.
+  const sum = buildCountingScene([row(3), row(4), row(7)])!;
+  assert.deepEqual(sum.groups, [{ rows: 1, cols: 3 }, { rows: 1, cols: 4 }],
+    "the merge draws the PARTS sliding together, not a fresh row of 7");
+  assert.equal(sum.merge, true);
+  assert.equal(sum.settled, 2);
+  assert.equal(countedSquares(sum), 7, "the total is recounted from 1");
+
+  // A join must be TRUE: 3x3 and 4x4 do not tile into a 5x5 by sliding, however
+  // true 9 + 16 = 25 is. Pythagoras accumulates but never animates a merge.
+  const pyth = buildCountingScene([grid([3, 3]), grid([4, 4]), grid([5, 5])])!;
+  assert.equal(pyth.merge, false, "a merge that could not really happen must not be drawn");
+  assert.equal(pyth.groups.length, 3);
+  assert.equal(countedSquares(pyth), 25, "only the newest grid is counted");
+  // Same row count, so these DO tile.
+  assert.equal(buildCountingScene([grid([2, 3]), grid([2, 4]), grid([2, 7])])!.merge, true);
+  // Right rows, wrong total → not a merge, just another group.
+  assert.equal(buildCountingScene([row(3), row(4), row(9)])!.merge, false);
+
+  // After a join the parts are one block, so a further step builds on the 7.
+  const after = buildCountingScene([row(3), row(4), row(7), row(2)])!;
+  assert.deepEqual(after.groups, [{ rows: 1, cols: 7 }, { rows: 1, cols: 2 }]);
+  assert.equal(after.settled, 1);
+  assert.equal(after.merge, false);
+
+  // A step resending what is already up adds only what is new.
+  const ext = buildCountingScene([row(3), grid([1, 3], [1, 4])])!;
+  assert.deepEqual(ext.groups, [{ rows: 1, cols: 3 }, { rows: 1, cols: 4 }]);
+  assert.equal(ext.settled, 1, "the repeated 3 must not be counted twice");
+  // The identical picture again changes nothing.
+  assert.deepEqual(buildCountingScene([row(3), row(3)])!.groups, [{ rows: 1, cols: 3 }]);
+
+  // Steps without a visual are transparent; a different KIND of visual is the
+  // model changing the subject and ends the sequence.
+  const pv = parseVisual({ kind: "placeValue", rows: [{ hundreds: 1, tens: 0, ones: 0 }] })!;
+  assert.equal(buildCountingScene([row(3), undefined, row(4)])!.groups.length, 2);
+  assert.deepEqual(buildCountingScene([row(3), pv, row(4)])!.groups, [{ rows: 1, cols: 4 }]);
+  assert.equal(buildCountingScene([row(3), pv]), null, "not a grid → no counting scene");
+  assert.equal(buildCountingScene([]), null);
+
+  // A wall of groups stops being countable: bounded, then started over.
+  const many = buildCountingScene([row(1), row(2), row(3), row(4), row(5), row(6)])!;
+  assert.ok(many.groups.length <= 4, `unbounded pile-up: ${many.groups.length} groups`);
+}
+
+// ── counting pace: slow enough to count along, bounded for big grids ─────────
+{
+  const grid = (n: number) => parseVisual({ kind: "unitGrid", grids: [{ rows: n, cols: n }] })!;
+  const row7 = parseVisual({ kind: "unitGrid", grids: [{ rows: 1, cols: 7 }] })!;
+
+  // A handful of squares is counted at counting-aloud speed…
+  assert.equal(countStepMs(7), COUNT_BEAT_MAX_MS);
+  assert.ok(countDurationMs(7) > 3000, "7 squares must take long enough to count with");
+  // …but 144 of them sweep instead, so no grid can ever stall the explanation.
+  assert.ok(countStepMs(144) < COUNT_BEAT_MAX_MS);
+  for (const total of [1, 3, 7, 16, 25, 50, 144, 432]) {
+    assert.ok(countDurationMs(total) <= COUNT_TOTAL_MAX_MS + 1,
+      `counting ${total} squares took ${countDurationMs(total)}ms`);
+    assert.ok(countStepMs(total) > 0);
+  }
+
+  // The hold must cover the animation it describes, joined or not, always.
+  assert.ok(minOnScreenMs(row7, true) > minOnScreenMs(row7, false),
+    "a join adds a slide and a colour change on top of the counting");
+  for (const v of [grid(1), grid(6), grid(12), row7]) {
+    for (const joined of [false, true]) {
+      const ms = minOnScreenMs(v, joined);
+      assert.ok(ms >= 2500 && ms <= 9000, `hold ${ms}ms out of range`);
+      const squares = v.kind === "unitGrid" ? v.grids.reduce((n, g) => n + g.rows * g.cols, 0) : 0;
+      assert.ok(ms >= VISUAL_ANIM_DELAY_MS + countDurationMs(squares),
+        `${squares} squares cannot finish counting inside a ${ms}ms hold`);
+    }
+  }
 }
 
 // ── quiz pointing: bounded retries, ordering, abort (backlog §5) ─────────────

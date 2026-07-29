@@ -14,9 +14,13 @@ interface LottieBadgeProps {
   src: string;
   className?: string;
   loop?: boolean;
+  /** "span" when the badge sits inside a <button>, whose content model allows
+   *  phrasing only. Safe with an absolutely-positioned className: such a span
+   *  is blockified, so width/height classes still apply. */
+  as?: "div" | "span";
 }
 
-export function LottieBadge({ src, className, loop = true }: LottieBadgeProps) {
+export function LottieBadge({ src, className, loop = true, as: Tag = "div" }: LottieBadgeProps) {
   const ref = useRef<HTMLDivElement>(null);
 
   useEffect(() => {
@@ -39,5 +43,5 @@ export function LottieBadge({ src, className, loop = true }: LottieBadgeProps) {
     };
   }, [src, loop]);
 
-  return <div ref={ref} className={className} aria-hidden />;
+  return <Tag ref={ref} className={className} aria-hidden />;
 }

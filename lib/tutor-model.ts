@@ -833,7 +833,7 @@ export async function answerGroupQuestion(
       "- NEVER invent a syllable split, a phoneme breakdown, or a pronunciation. Only use a " +
       "VERIFIED WORD BREAKDOWN if one is given to you below, copied exactly as written.\n" +
       "- If you are asked to break down a word and no verified breakdown is supplied, say you " +
-      "cannot split that one reliably and point them to Stuck-Word Autopsy in the app, which " +
+      "cannot split that one reliably and point them to Stuck-Word Autospy in the app, which " +
       "sounds words out from a checked phonics table. Do not guess.\n" +
       "- Do NOT explain why a word is spelled as it is, and do not call words compounds or root " +
       "forms. The words come from scanned worksheets and may carry OCR artifacts (a lost hyphen " +

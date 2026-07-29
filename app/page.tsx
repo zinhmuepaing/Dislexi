@@ -6,21 +6,44 @@
  */
 
 import { useEffect, useState } from "react";
-import { CalendarDays, Sparkles } from "lucide-react";
+import { CalendarDays, ChevronRight, Sparkles } from "lucide-react";
 import { BrandMark } from "@/components/BrandMark";
 import { LottieBadge } from "@/components/LottieBadge";
 import { PracticeSummary } from "@/components/PracticeSummary";
+import { ToolSheet } from "@/components/ToolSheet";
 
 const KARAOKE_WORDS = "Find the perimeter of the rectangle below.".split(" ");
 
+/** Tap sweep: the idle read-along stops teasing one word at a time and races
+ *  to the end of the sentence. Plays once and stops — no looping motion beside
+ *  text. The sheet starts rising over the tail of it so the tap feels instant;
+ *  the last strokes finish behind the scrim, still visible. */
+const SWEEP_STAGGER_MS = 42;
+const SHEET_DELAY_MS = 200;
+
 export default function ModeSelector() {
   const [lit, setLit] = useState(0);
+  const [sweeping, setSweeping] = useState(false);
+  const [sheet, setSheet] = useState(false);
 
   useEffect(() => {
+    if (sweeping) return; // the sweep has the floor; don't cycle underneath it
     if (window.matchMedia("(prefers-reduced-motion: reduce)").matches) return;
     const t = setInterval(() => setLit((i) => (i + 1) % KARAOKE_WORDS.length), 480);
     return () => clearInterval(t);
-  }, []);
+  }, [sweeping]);
+
+  useEffect(() => {
+    if (!sweeping) return;
+    const t = setTimeout(() => setSheet(true), SHEET_DELAY_MS);
+    return () => clearTimeout(t);
+  }, [sweeping]);
+
+  // Closing puts the card back to its idle read-along, so it can be tapped again.
+  const closeSheet = () => {
+    setSheet(false);
+    setSweeping(false);
+  };
 
   return (
     <main className="home-shell mx-auto min-h-dvh w-full max-w-6xl px-4 pb-28 pt-4 sm:px-6 lg:px-8 lg:pt-6">
@@ -40,34 +63,66 @@ export default function ModeSelector() {
         </div>
       </header>
 
-      <section className="paper-card home-readalong relative mb-4 overflow-hidden p-4 sm:p-5">
-        <div className="relative z-10 max-w-[78%] sm:max-w-none">
-          <div className="mb-2 flex items-center gap-2">
+      {/* The demo sentence is the invitation: tapping it opens the same tool
+          picker as the Scan button, so the thing being demonstrated is also the
+          way to start doing it. Content is all phrasing so the <button> stays
+          valid HTML. */}
+      <button
+        type="button"
+        onClick={() => setSweeping(true)}
+        // Distinct from the Scan button's "Start a session": two controls that
+        // open the same sheet must still be tellable apart by ear.
+        aria-label="Live read-along demo — start a session"
+        className="paper-card home-readalong press relative mb-4 block w-full overflow-hidden p-4 text-left sm:p-5"
+      >
+        <span className="relative z-10 block max-w-[78%] sm:max-w-none">
+          <span className="mb-2 flex items-center gap-2">
             <span className="paper-icon paper-icon-coral">
               <Sparkles size={16} aria-hidden />
             </span>
             <span className="paper-kicker">Live read-along</span>
-          </div>
-          <p
-            className="font-display text-lg font-bold leading-relaxed sm:text-xl"
-            aria-label={KARAOKE_WORDS.join(" ")}
+          </span>
+          <span
+            className="font-display block text-lg font-bold leading-relaxed sm:text-xl"
+            aria-hidden
           >
             {KARAOKE_WORDS.map((word, index) => (
               <span key={`${word}-${index}`}>
-                <span className={index === lit ? "karaoke-word-active" : "karaoke-word"}>
+                <span
+                  className={
+                    sweeping
+                      ? "karaoke-word karaoke-swipe"
+                      : index === lit
+                        ? "karaoke-word-active"
+                        : "karaoke-word"
+                  }
+                  style={
+                    sweeping
+                      ? ({ "--mark-delay": `${index * SWEEP_STAGGER_MS}ms` } as React.CSSProperties)
+                      : undefined
+                  }
+                >
                   {word}
                 </span>{" "}
               </span>
             ))}
-          </p>
-        </div>
+          </span>
+        </span>
+        <ChevronRight
+          size={20}
+          aria-hidden
+          className="absolute right-3 top-3 z-10"
+          color="var(--ink-soft)"
+        />
         <LottieBadge
+          as="span"
           src="/lottie/pointer-bounce.json"
           className="pointer-events-none absolute -bottom-1 right-1 h-20 w-20 sm:right-4 sm:h-24 sm:w-24"
         />
-      </section>
+      </button>
 
       <PracticeSummary />
+      <ToolSheet open={sheet} onClose={closeSheet} />
     </main>
   );
 }

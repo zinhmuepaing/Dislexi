@@ -154,6 +154,116 @@ export function parseVisual(raw: unknown): TutorVisual | null {
   }
 }
 
+/* ── Counting scenes ─────────────────────────────────────────────────────────
+ * A unitGrid step used to REPLACE the one before it, so "3", then "4", then
+ * "7" flashed past as three unrelated pictures and the student never saw the
+ * 3 and the 4 become the 7. The model already sends the right steps; what was
+ * missing was memory between them.
+ *
+ * So the client folds the run of unitGrid steps into one scene: earlier groups
+ * stay on screen keeping their colour, each new step adds its own group, and
+ * when a step's grid is exactly the groups already up there pushed together,
+ * they slide into it instead of replacing it.
+ *
+ * This is presentation, so it lives here and not in the prompt — the model
+ * still only says WHAT quantity this step is about (ARCHITECTURE §7 rule 3),
+ * and an old transcript replays identically.
+ */
+
+export interface SceneGroup {
+  rows: number;
+  cols: number;
+}
+
+export interface CountingScene {
+  /** Every group on screen, left to right, oldest first. */
+  groups: SceneGroup[];
+  /** How many leading groups were counted in an earlier step: they hold still. */
+  settled: number;
+  /** This step is the groups' total: they slide together and are recounted. */
+  merge: boolean;
+  showCounts: boolean;
+}
+
+/** More than this stops being one countable picture and becomes wallpaper. */
+const MAX_SCENE_GROUPS = 4;
+
+const cellsIn = (g: SceneGroup) => g.rows * g.cols;
+const sameGroup = (a: SceneGroup, b: SceneGroup) => a.rows === b.rows && a.cols === b.cols;
+const totalCols = (gs: SceneGroup[]) => gs.reduce((n, g) => n + g.cols, 0);
+
+/**
+ * Fold the steps' visuals (in step order, up to and including the active one)
+ * into the scene to draw. Returns null unless the active step is a unitGrid.
+ *
+ * Steps with no visual are transparent — narration between two pictures does
+ * not wipe the first — but a DIFFERENT kind of visual ends the sequence, since
+ * that is the model changing the subject.
+ */
+export function buildCountingScene(
+  visuals: readonly (TutorVisual | undefined | null)[],
+): CountingScene | null {
+  const run: UnitGridSpec[] = [];
+  for (let i = visuals.length - 1; i >= 0; i--) {
+    const v = visuals[i];
+    if (!v) continue;
+    if (v.kind !== "unitGrid") break;
+    run.unshift(v);
+  }
+  if (run.length === 0) return null;
+
+  let groups: SceneGroup[] = [];
+  let settled = 0;
+  let merge = false;
+
+  for (const spec of run) {
+    if (merge) {
+      // The previous step joined them; from here on they are a single block.
+      groups = [{ rows: groups[0].rows, cols: totalCols(groups) }];
+      settled = 1;
+      merge = false;
+    }
+    const incoming = spec.grids;
+
+    // Only call it a merge when the parts REALLY tile into the total by
+    // sliding — same row count, columns adding up. 1x3 + 1x4 → 1x7 does;
+    // 3x3 + 4x4 → 5x5 (Pythagoras) does not, however true 9 + 16 = 25 is, and
+    // animating that would show the student a lie.
+    if (
+      groups.length >= 2 &&
+      incoming.length === 1 &&
+      groups.every((g) => g.rows === incoming[0].rows) &&
+      totalCols(groups) === incoming[0].cols
+    ) {
+      merge = true;
+      settled = groups.length;
+      continue;
+    }
+
+    // A step may resend the groups already up plus a new one; only what is
+    // genuinely new gets counted.
+    const extends_ =
+      incoming.length >= groups.length && groups.every((g, i) => sameGroup(g, incoming[i]));
+    const added = extends_ ? incoming.slice(groups.length) : incoming;
+    if (added.length === 0) continue; // same picture again — leave it settled
+
+    settled = groups.length;
+    groups = [...groups, ...added];
+    if (groups.length > MAX_SCENE_GROUPS) {
+      groups = incoming.slice(0, MAX_SCENE_GROUPS); // start the picture over
+      settled = 0;
+    }
+  }
+
+  return { groups, settled, merge, showCounts: run[run.length - 1].showCounts !== false };
+}
+
+/** Squares this scene counts now: all of them on a merge, else only the new ones. */
+export function countedSquares(scene: CountingScene): number {
+  const from = scene.merge ? 0 : scene.settled;
+  return scene.groups.slice(from).reduce((n, g) => n + cellsIn(g), 0);
+}
+
 /* ── Pacing ──────────────────────────────────────────────────────────────────
  * A visual is an ACTIVITY, not a glance. Bound to a step's lifetime it lived
  * only as long as one spoken sentence, which is far too short to count 50
@@ -168,6 +278,32 @@ export const VISUAL_ANIM_MS = 1500;
 /** Interactive visuals wait for the student; this only stops them stranding. */
 export const EXPLORE_MAX_MS = 25_000;
 
+/* Counting beats — shared with VisualCard's CSS so the hold below can never be
+ * shorter than the animation it is meant to cover. */
+/** Two groups sliding together into their total. */
+export const JOIN_MS = 700;
+/** One square's grow-and-wobble as it is counted. */
+export const COUNT_POP_MS = 320;
+/** Slowest beat: about the speed a child counts aloud, one square at a time. */
+export const COUNT_BEAT_MAX_MS = 450;
+/** …but a big grid must not take a minute, so it sweeps instead of counting. */
+export const COUNT_TOTAL_MAX_MS = 6000;
+/** After a join, the parts hold their own colours, then become one quantity. */
+export const UNIFY_DELAY_MS = 500;
+export const UNIFY_MS = 600;
+/** Stillness after the last square, so the finished picture registers. */
+export const COUNT_SETTLE_MS = 600;
+
+/** Gap between counted squares, in beats-per-square. */
+export function countStepMs(total: number): number {
+  return Math.min(COUNT_BEAT_MAX_MS, COUNT_TOTAL_MAX_MS / Math.max(1, total));
+}
+
+/** How long counting `total` squares takes, start of the first to end of the last. */
+export function countDurationMs(total: number): number {
+  return total * countStepMs(total);
+}
+
 /** Interactive visuals hand control to the student instead of being timed. */
 export function isInteractiveVisual(v: TutorVisual): boolean {
   return v.kind === "ratioTriangle";
@@ -177,14 +313,24 @@ export function isInteractiveVisual(v: TutorVisual): boolean {
  * Minimum TOTAL time this visual should stay on screen, narration included —
  * the caller subtracts however long the sentence already took. 0 means the
  * visual is interactive and waits for the student rather than a clock.
+ *
+ * `joined` is a unitGrid step that merges the groups already on screen
+ * (`CountingScene.merge`): it has a slide and a colour change to get through
+ * on top of the counting, so it needs longer than the same grid shown cold.
  */
-export function minOnScreenMs(v: TutorVisual): number {
+export function minOnScreenMs(v: TutorVisual, joined = false): number {
   const clamp = (n: number, lo: number, hi: number) => Math.min(hi, Math.max(lo, n));
   switch (v.kind) {
     case "unitGrid": {
-      // Counting is the whole point, so scale with how much there is to count.
+      // Counting is the whole point, so this tracks the animation exactly:
+      // head start, optional join, one beat per square, then stillness.
       const squares = v.grids.reduce((n, g) => n + g.rows * g.cols, 0);
-      return clamp(1200 + squares * 110, 2500, 9000);
+      const join = joined ? JOIN_MS + UNIFY_DELAY_MS + UNIFY_MS : 0;
+      return clamp(
+        VISUAL_ANIM_DELAY_MS + join + countDurationMs(squares) + COUNT_SETTLE_MS,
+        2500,
+        9000,
+      );
     }
     case "placeValue": {
       const blocks = v.rows.reduce((n, r) => n + r.hundreds + r.tens + r.ones, 0);
@@ -212,8 +358,8 @@ export function minOnScreenMs(v: TutorVisual): number {
  */
 export function startVisualHold(now: () => number = () => Date.now()) {
   const start = now();
-  return async (v: TutorVisual): Promise<number> => {
-    const remaining = minOnScreenMs(v) - (now() - start);
+  return async (v: TutorVisual, joined = false): Promise<number> => {
+    const remaining = minOnScreenMs(v, joined) - (now() - start);
     if (remaining <= 0) return 0;
     await new Promise((r) => setTimeout(r, remaining));
     return remaining;

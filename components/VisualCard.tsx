@@ -19,9 +19,17 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import { RotateCcw, X } from "lucide-react";
 import {
+  buildCountingScene,
+  countedSquares,
+  countStepMs,
   ratioValue,
+  COUNT_POP_MS,
+  JOIN_MS,
+  UNIFY_DELAY_MS,
+  UNIFY_MS,
   VISUAL_ANIM_DELAY_MS,
   VISUAL_ANIM_MS,
+  type CountingScene,
   type PlaceValueSpec,
   type RatioTriangleSpec,
   type RearrangeParallelogramSpec,
@@ -69,43 +77,247 @@ function usePlayOnce(): { t: number; replay: () => void; done: boolean } {
 
 /* ── §1 unit grids ──────────────────────────────────────────────────────── */
 
-function UnitGrid({ spec }: { spec: UnitGridSpec }) {
-  const maxDim = Math.max(...spec.grids.map((g) => Math.max(g.rows, g.cols)));
-  const cell = Math.max(8, Math.min(22, 132 / maxDim));
-  const gap = 2;
+const CELL_GAP = 2;
+/** Space between groups — wide enough to hold the "+" that appears before they join. */
+const GROUP_GAP = 20;
+const LABEL_H = 20;
+
+/**
+ * Ticks 1..`to` in step with the squares popping, so the numeral and the
+ * picture can never disagree. Its own component because counting a large grid
+ * would otherwise re-render several hundred <rect>s on every beat; this way it
+ * re-renders one <text>.
+ */
+function CountUp({
+  to,
+  beat,
+  delay,
+  x,
+  y,
+}: {
+  to: number;
+  beat: number;
+  delay: number;
+  x: number;
+  y: number;
+}) {
+  const [n, setN] = useState(0);
+  useEffect(() => {
+    let raf = 0;
+    const start = performance.now();
+    const tick = (now: number) => {
+      const k = Math.max(0, Math.min(to, Math.floor((now - start - delay) / beat) + 1));
+      setN((v) => (v === k ? v : k));
+      if (k < to) raf = requestAnimationFrame(tick);
+    };
+    raf = requestAnimationFrame(tick);
+    return () => cancelAnimationFrame(raf);
+  }, [to, beat, delay]);
   return (
-    <div className="flex flex-wrap items-end justify-center gap-4">
-      {spec.grids.map((g, gi) => {
-        const w = g.cols * (cell + gap);
-        const h = g.rows * (cell + gap);
-        return (
-          <div key={gi} className="flex flex-col items-center gap-1">
-            <svg width={w} height={h} role="presentation">
-              {Array.from({ length: g.rows }).map((_, r) =>
-                Array.from({ length: g.cols }).map((_, c) => (
-                  <rect
-                    key={`${r}-${c}`}
-                    x={c * (cell + gap)}
-                    y={r * (cell + gap)}
-                    width={cell}
-                    height={cell}
-                    rx={2}
-                    fill={TINTS[gi % TINTS.length]}
-                    stroke={INK}
-                    strokeWidth={1.2}
-                  />
-                )),
-              )}
-            </svg>
-            {spec.showCounts && (
-              <span className="text-[15px] font-semibold tabular-nums text-[var(--ink)]">
-                {g.rows * g.cols}
-              </span>
-            )}
-          </div>
-        );
-      })}
-    </div>
+    <text
+      x={x}
+      y={y}
+      textAnchor="middle"
+      fontSize={15}
+      fontWeight={600}
+      fill={INK}
+      style={{ fontVariantNumeric: "tabular-nums" }}
+    >
+      {n > 0 ? n : ""}
+    </text>
+  );
+}
+
+/**
+ * Countable squares, counted OUT LOUD by the picture: each square fills with a
+ * grow-and-wobble on its own beat while the numeral beneath ticks up with it.
+ *
+ * The scene (lib/tutor-visual.ts) decides what is on screen: groups from
+ * earlier steps stay and keep their colour, so when the "4" appears the "3" is
+ * still there to be added to, and when the step after that IS the total the two
+ * slide together into it rather than replacing it. Everything here is geometry
+ * for that decision — one <svg> rather than a flex row of them, because the
+ * groups have to move relative to each other.
+ */
+function UnitGrid({ spec, scene }: { spec: UnitGridSpec; scene?: CountingScene | null }) {
+  const s = scene ?? buildCountingScene([spec]);
+  const [runId, setRunId] = useState(0);
+  // Which run has finished, rather than a flag: replaying bumps runId, so
+  // `done` falls back to false on its own without resetting state in an effect.
+  const [finished, setFinished] = useState(-1);
+  const done = finished === runId;
+
+  const counted = s ? countedSquares(s) : 0;
+  const beat = countStepMs(counted);
+  const countStart = ANIM_DELAY_MS + (s?.merge ? JOIN_MS : 0);
+  const endMs = countStart + counted * beat + (s?.merge ? UNIFY_DELAY_MS + UNIFY_MS : 0);
+
+  useEffect(() => {
+    const t = setTimeout(() => setFinished(runId), endMs);
+    return () => clearTimeout(t);
+  }, [endMs, runId]);
+
+  if (!s) return null;
+  const { groups, settled, merge, showCounts } = s;
+  const n = groups.length;
+
+  // Size for the WIDEST the picture will ever be, so a join moves the squares
+  // without also resizing them. Groups that cannot join (different row counts,
+  // e.g. the Pythagoras 3x3/4x4/5x5) keep the old sizing exactly.
+  const maxRows = Math.max(...groups.map((g) => g.rows));
+  const uniformRows = groups.every((g) => g.rows === groups[0].rows);
+  const cols = groups.map((g) => g.cols);
+  const spanCols = uniformRows ? cols.reduce((a, b) => a + b, 0) : Math.max(...cols);
+  const cell = Math.max(8, Math.min(22, 132 / Math.max(maxRows, spanCols)));
+  const step = cell + CELL_GAP;
+
+  const widths = cols.map((c) => c * step);
+  const joinedW = widths.reduce((a, b) => a + b, 0);
+  const gridH = maxRows * step;
+  const W = joinedW + (n - 1) * GROUP_GAP;
+  const H = gridH + (showCounts ? LABEL_H : 0);
+
+  // x of each group with the gaps closed; `spread` is the extra it sits out by
+  // while the groups are still apart.
+  const mergedX: number[] = [];
+  widths.reduce((acc, w) => (mergedX.push(acc), acc + w), 0);
+  const spread = (k: number) => k * GROUP_GAP;
+
+  // On a merge every square is recounted (that is the point — the 7 is counted
+  // as a 7); otherwise only the groups this step brought in.
+  const countFrom = merge ? 0 : settled;
+  let ci = 0;
+
+  return (
+    <Animated replay={() => setRunId((r) => r + 1)} done={done}>
+      <svg
+        width={W}
+        height={H}
+        role="presentation"
+        style={{ "--vc-unify": TINTS[0] } as React.CSSProperties}
+      >
+        <g
+          key={runId}
+          style={
+            merge
+              ? ({
+                  "--vc-recentre": `${((n - 1) * GROUP_GAP) / 2}px`,
+                  animation: `vc-recentre ${JOIN_MS}ms ease-in-out ${ANIM_DELAY_MS}ms both`,
+                } as React.CSSProperties)
+              : undefined
+          }
+        >
+          {groups.map((g, k) => {
+            const counts = k >= countFrom;
+            const firstIndex = ci;
+            const yTop = gridH - g.rows * step;
+            const squares = Array.from({ length: g.rows * g.cols }, (_, q) => {
+              const r = Math.floor(q / g.cols);
+              const c = q % g.cols;
+              const at = counts ? countStart + ci++ * beat : 0;
+              const pop = counts
+                ? `${merge ? "vc-count-again" : "vc-count-in"} ${COUNT_POP_MS}ms ease-out ${at}ms backwards`
+                : "";
+              const unify = merge
+                ? `vc-unify ${UNIFY_MS}ms ease ${countStart + counted * beat + UNIFY_DELAY_MS}ms forwards`
+                : "";
+              return (
+                <rect
+                  key={q}
+                  className="vc-square"
+                  x={c * step}
+                  y={yTop + r * step}
+                  width={cell}
+                  height={cell}
+                  rx={2}
+                  fill={TINTS[k % TINTS.length]}
+                  stroke={INK}
+                  strokeWidth={1.2}
+                  style={{ animation: [pop, unify].filter(Boolean).join(", ") || undefined }}
+                />
+              );
+            });
+            return (
+              <g key={k} transform={`translate(${mergedX[k] + (merge ? 0 : spread(k))} 0)`}>
+                <g
+                  style={
+                    merge
+                      ? ({
+                          "--vc-dx": `${spread(k)}px`,
+                          animation: `vc-join ${JOIN_MS}ms ease-in-out ${ANIM_DELAY_MS}ms both`,
+                        } as React.CSSProperties)
+                      : undefined
+                  }
+                >
+                  {squares}
+                  {showCounts &&
+                    (merge ? (
+                      // The parts' own totals belong to the parts: they go as
+                      // the parts stop being separate things.
+                      <text
+                        x={widths[k] / 2}
+                        y={gridH + 15}
+                        textAnchor="middle"
+                        fontSize={15}
+                        fontWeight={600}
+                        fill={INK}
+                        style={{
+                          fontVariantNumeric: "tabular-nums",
+                          animation: `vc-transient ${ANIM_DELAY_MS + JOIN_MS}ms ease both`,
+                        }}
+                      >
+                        {g.rows * g.cols}
+                      </text>
+                    ) : counts ? (
+                      <CountUp
+                        to={g.rows * g.cols}
+                        beat={beat}
+                        delay={countStart + firstIndex * beat}
+                        x={widths[k] / 2}
+                        y={gridH + 15}
+                      />
+                    ) : (
+                      <text
+                        x={widths[k] / 2}
+                        y={gridH + 15}
+                        textAnchor="middle"
+                        fontSize={15}
+                        fontWeight={600}
+                        fill={INK}
+                        style={{ fontVariantNumeric: "tabular-nums" }}
+                      >
+                        {g.rows * g.cols}
+                      </text>
+                    ))}
+                </g>
+              </g>
+            );
+          })}
+
+          {/* Only ever drawn when the groups are about to be combined, and gone
+              by the time they are — so it can never mislabel a comparison. */}
+          {merge &&
+            groups.slice(1).map((_, i) => (
+              <text
+                key={`p${i}`}
+                x={mergedX[i + 1] + spread(i + 1) - GROUP_GAP / 2}
+                y={gridH / 2 + 6}
+                textAnchor="middle"
+                fontSize={17}
+                fontWeight={700}
+                fill={INK}
+                style={{ animation: `vc-transient ${ANIM_DELAY_MS + JOIN_MS}ms ease both` }}
+              >
+                +
+              </text>
+            ))}
+
+          {merge && showCounts && (
+            <CountUp to={counted} beat={beat} delay={countStart} x={joinedW / 2} y={gridH + 15} />
+          )}
+        </g>
+      </svg>
+    </Animated>
   );
 }
 
@@ -375,15 +587,19 @@ function RatioTriangle({ spec }: { spec: RatioTriangleSpec }) {
 export function VisualCard({
   visual,
   avoid,
+  scene,
   onClose,
 }: {
   visual: TutorVisual;
   /** Normalized rect the card must not cover (the step's spot on the paper). */
   avoid?: { y: number; h: number } | null;
+  /** unitGrid only: what earlier steps already put on screen, so the counting
+   *  builds up instead of restarting. Omitted → this step's grids alone. */
+  scene?: CountingScene | null;
   onClose?: () => void;
 }) {
   let body: React.ReactNode = null;
-  if (visual.kind === "unitGrid") body = <UnitGrid spec={visual} />;
+  if (visual.kind === "unitGrid") body = <UnitGrid spec={visual} scene={scene} />;
   else if (visual.kind === "placeValue") body = <PlaceValue spec={visual} />;
   else if (visual.kind === "foldTriangle") body = <FoldTriangle spec={visual} />;
   else if (visual.kind === "rearrangeParallelogram") body = <RearrangeParallelogram spec={visual} />;

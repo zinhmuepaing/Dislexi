@@ -14,6 +14,7 @@
 
 import { VisualCard } from "@/components/VisualCard";
 import {
+  buildCountingScene,
   isInteractiveVisual,
   minOnScreenMs,
   parseVisual,
@@ -22,15 +23,37 @@ import {
 
 const ENABLED = process.env.NEXT_PUBLIC_TEST_IMAGES === "1";
 
-const CASES: { title: string; note: string; raw: unknown }[] = [
+/** `before`: grids from EARLIER steps of the same explanation, so the build-up
+ *  and the join can be judged the way a student meets them. */
+const CASES: { title: string; note: string; raw: unknown; before?: unknown[] }[] = [
+  {
+    title: "§1 unitGrid — 3 + 4, step 1: count the 3",
+    note: "each square fills with a pop; the numeral ticks up with it",
+    raw: { kind: "unitGrid", grids: [{ rows: 1, cols: 3 }] },
+  },
+  {
+    title: "§1 unitGrid — 3 + 4, step 2: the 3 STAYS",
+    note: "the 3 holds still in its own colour; only the new 4 counts in",
+    raw: { kind: "unitGrid", grids: [{ rows: 1, cols: 4 }] },
+    before: [{ kind: "unitGrid", grids: [{ rows: 1, cols: 3 }] }],
+  },
+  {
+    title: "§1 unitGrid — 3 + 4, step 3: they JOIN into 7",
+    note: "'+' appears, the parts slide together, all 7 are recounted, then the two colours become one",
+    raw: { kind: "unitGrid", grids: [{ rows: 1, cols: 7 }] },
+    before: [
+      { kind: "unitGrid", grids: [{ rows: 1, cols: 3 }] },
+      { kind: "unitGrid", grids: [{ rows: 1, cols: 4 }] },
+    ],
+  },
   {
     title: "§1 unitGrid — Pythagoras by counting",
-    note: "3² + 4² = 5² · 9 + 16 = 25, countable rather than asserted",
+    note: "3² + 4² = 5² · 9 + 16 = 25. Must NOT animate a join: those squares cannot tile into the 5×5 by sliding",
     raw: { kind: "unitGrid", grids: [{ rows: 3, cols: 3 }, { rows: 4, cols: 4 }, { rows: 5, cols: 5 }] },
   },
   {
     title: "§1 unitGrid — single area",
-    note: "one grid, e.g. area of a 6×4 rectangle",
+    note: "one grid, e.g. area of a 6×4 rectangle. 24 squares sweep rather than plod",
     raw: { kind: "unitGrid", grids: [{ rows: 4, cols: 6 }] },
   },
   {
@@ -86,6 +109,9 @@ export default function DevVisualsPage() {
       <div className="flex flex-col gap-5">
         {CASES.map((c) => {
           const spec = parseVisual(c.raw) as TutorVisual | null;
+          const scene = spec
+            ? buildCountingScene([...(c.before ?? []).map(parseVisual), spec])
+            : null;
           return (
             <section key={c.title} data-case={c.title}>
               <h2 className="text-sm font-semibold text-[var(--ink)]">{c.title}</h2>
@@ -94,12 +120,12 @@ export default function DevVisualsPage() {
                 {spec
                   ? isInteractiveVisual(spec)
                     ? "stays until the student taps Next (auto after 25s)"
-                    : `stays on screen ≥ ${(minOnScreenMs(spec) / 1000).toFixed(1)}s`
+                    : `stays on screen ≥ ${(minOnScreenMs(spec, scene?.merge ?? false) / 1000).toFixed(1)}s`
                   : "—"}
               </p>
               <div className="relative h-[280px] overflow-hidden rounded-xl border-2 border-dashed border-[var(--ink-soft)] bg-[var(--ink)]/5">
                 {spec ? (
-                  <VisualCard visual={spec} />
+                  <VisualCard visual={spec} scene={scene} />
                 ) : (
                   <p className="flex h-full items-center justify-center text-xs text-[var(--ink-soft)]">
                     parseVisual → null (correctly rejected)

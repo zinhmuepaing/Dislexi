@@ -724,7 +724,7 @@ export default function AutopsyPage() {
           <ChevronLeft size={20} color="var(--ink)" />
         </Link>
         <span className="tool-badge px-3 py-1.5 text-sm font-semibold">
-          Autopsy
+          Autospy
         </span>
         <span className="tool-badge flex items-center gap-1 px-2.5 py-1.5 text-[12px] font-medium">
           <BookOpen size={13} /> {practicedCount}

@@ -23,6 +23,7 @@ import { CameraStage, CameraStageHandle, CapturedFrame } from "@/components/Came
 import { FormulaCard } from "@/components/FormulaCard";
 import { VisualCard } from "@/components/VisualCard";
 import {
+  buildCountingScene,
   EXPLORE_MAX_MS,
   isInteractiveVisual,
   startVisualHold,
@@ -540,7 +541,11 @@ export default function TutoringPage() {
           if (narrationRun.current !== run) return;
           await waitForContinue();
         } else {
-          await hold(step.visual);
+          // A step that joins the groups already on screen has a slide and a
+          // recount to get through, so it must be held longer than the same
+          // grid shown cold.
+          const scene = buildCountingScene(stepsRef.current.slice(0, i + 1).map((s) => s.visual));
+          await hold(step.visual, scene?.merge ?? false);
         }
         if (narrationRun.current !== run) return;
       }
@@ -742,6 +747,10 @@ export default function TutoringPage() {
             key={`v${visual.key}`}
             visual={visual.visual}
             avoid={active?.region ?? null}
+            // Earlier grids in this explanation stay on screen and keep their
+            // colour, so "3" is still there when "4" arrives and the two can
+            // then slide together into the total.
+            scene={buildCountingScene(steps.slice(0, visual.key + 1).map((s) => s.visual))}
             onClose={() => setDismissedVisual(visual.key)}
           />
         )}

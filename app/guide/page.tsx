@@ -50,7 +50,7 @@ const MODES: {
   },
   {
     href: "/autopsy",
-    title: "Word Autopsy",
+    title: "Word Autospy",
     description: "Break down and practise a word.",
     Icon: SpellCheck2,
     tone: "green",
