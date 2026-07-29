@@ -145,6 +145,9 @@ export default function AutopsyPage() {
   const [activeChunk, setActiveChunk] = useState(-1);
   const [practicedCount, setPracticedCount] = useState(0);
   const [listening, setListening] = useState(false);
+  /** Why the mic won't start — its own slot, because the shared status line is
+   *  overwritten by camera and coaching updates moments later. */
+  const [micError, setMicError] = useState<string | null>(null);
   const [status, setStatus] = useState("Starting camera…");
   const [quiz, setQuiz] = useState<QuizState | null>(null);
 
@@ -422,6 +425,7 @@ export default function AutopsyPage() {
       listenerRef.current.stop();
       listenerRef.current = null;
       setListening(false);
+      setMicError(null);
       return;
     }
     try {
@@ -429,10 +433,10 @@ export default function AutopsyPage() {
         onUtterance: (t) => void handleUtterance(t),
         onState: setListening,
       });
+      setMicError(null);
     } catch (err) {
       setListening(false);
-      const why = err instanceof Error ? err.message : "Mic unavailable.";
-      setStatus(`${why} Use the buttons.`);
+      setMicError(err instanceof Error ? err.message : "Mic unavailable.");
     }
   }
 
@@ -736,6 +740,14 @@ export default function AutopsyPage() {
       <div className="absolute inset-x-0 bottom-0 z-10">
         <div className="tool-sheet mx-auto max-w-md rounded-t-[22px] px-4 pb-[max(16px,env(safe-area-inset-bottom))] pt-3">
           <div className="mx-auto mb-2 h-1 w-9 rounded-full bg-[var(--ink)] opacity-20" aria-hidden />
+          {micError && (
+            <div
+              role="status"
+              className="fadein mb-2 rounded-[10px] border-[1.5px] border-[var(--coral-deep)] bg-[color-mix(in_srgb,var(--coral)_12%,var(--paper-card))] p-2.5 text-[13px] leading-snug"
+            >
+              {micError} The buttons still work — tap the mic to retry.
+            </div>
+          )}
           <div className="flex gap-2">
             <button
               onClick={() => void pointAndAct("coach")}

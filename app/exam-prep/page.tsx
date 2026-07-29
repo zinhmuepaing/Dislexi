@@ -160,6 +160,10 @@ export default function ExamPrepPage() {
   const [activeChar, setActiveChar] = useState<{ start: number; len: number }>({ start: 0, len: 0 });
   const [status, setStatus] = useState("Starting camera…");
   const [listening, setListening] = useState(false);
+  /** Why the mic won't start. Its own slot, not `status`: the mic auto-starts on
+   *  entry, and the shared status line is overwritten moments later by camera
+   *  and scan updates, so the reason flashed past before it could be read. */
+  const [micError, setMicError] = useState<string | null>(null);
   const [finding, setFinding] = useState(false);
 
   function rebuildUnits() {
@@ -394,6 +398,7 @@ export default function ExamPrepPage() {
       listenerRef.current.stop();
       listenerRef.current = null;
       setListening(false);
+      setMicError(null);
       return;
     }
     try {
@@ -401,10 +406,10 @@ export default function ExamPrepPage() {
         onUtterance: (t) => void handleUtterance(t),
         onState: setListening,
       });
+      setMicError(null);
     } catch (err) {
       setListening(false);
-      const why = err instanceof Error ? err.message : "Mic unavailable.";
-      setStatus(`${why} Use the Read this button.`);
+      setMicError(err instanceof Error ? err.message : "Mic unavailable.");
     }
   }
 
@@ -549,6 +554,14 @@ export default function ExamPrepPage() {
       <div className="absolute inset-x-0 bottom-0 z-10">
         <div className="tool-sheet mx-auto max-w-md rounded-t-[22px] px-4 pb-[max(16px,env(safe-area-inset-bottom))] pt-3">
           <div className="mx-auto mb-2 h-1 w-9 rounded-full bg-[var(--ink)] opacity-20" aria-hidden />
+          {micError && (
+            <div
+              role="status"
+              className="fadein mb-2 rounded-[10px] border-[1.5px] border-[var(--coral-deep)] bg-[color-mix(in_srgb,var(--coral)_12%,var(--paper-card))] p-2.5 text-[13px] leading-snug"
+            >
+              {micError} Pointing and the Read this button still work — tap the mic to retry.
+            </div>
+          )}
           <div className="mb-2 flex flex-wrap items-center gap-1.5">
             {SCOPES.map((s) => (
               <button
