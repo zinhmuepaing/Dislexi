@@ -38,7 +38,12 @@ export async function getSpeechToken(): Promise<{ token: string; region: string 
 async function getToken(): Promise<{ token: string; region: string }> {
   if (cachedToken && Date.now() - cachedToken.fetchedAt < TOKEN_TTL_MS) return cachedToken;
   const res = await fetch("/api/azure-token");
-  if (!res.ok) throw new Error(`azure-token ${res.status}`);
+  if (!res.ok) {
+    // Carry the server's reason through: "azure-token 500" alone gives whoever
+    // is debugging a dead mic nothing to go on.
+    const detail = (await res.json().catch(() => null)) as { error?: string } | null;
+    throw new Error(`azure-token ${res.status}${detail?.error ? `: ${detail.error}` : ""}`);
+  }
   const { token, region } = (await res.json()) as { token: string; region: string };
   cachedToken = { token, region, fetchedAt: Date.now() };
   return cachedToken;

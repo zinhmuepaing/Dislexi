@@ -429,9 +429,10 @@ export default function AutopsyPage() {
         onUtterance: (t) => void handleUtterance(t),
         onState: setListening,
       });
-    } catch {
+    } catch (err) {
       setListening(false);
-      setStatus("Mic unavailable — use the buttons.");
+      const why = err instanceof Error ? err.message : "Mic unavailable.";
+      setStatus(`${why} Use the buttons.`);
     }
   }
 

@@ -119,6 +119,9 @@ Allowed "visual" values — use these EXACTLY, no other shapes, no coordinates, 
 - {"kind":"rearrangeParallelogram","base":12,"height":7,"slant":3} — cuts the slanted end off a parallelogram and slides it, making a rectangle (proves base x height).
 - {"kind":"ratioTriangle","angleDeg":43,"ratio":"sin","adjacent":35} — a right triangle the student DRAGS to change the angle, with the ratio updating live. Use for sin/cos/tan. "adjacent" only if the worksheet gives that length.
 
+ADDING with unitGrid — follow this shape exactly, it drives an animation:
+Give each part its OWN step, one grid per step, every grid "rows":1 (so 3 is {"rows":1,"cols":3}). Then in a LATER step give the TOTAL, on its own, as one grid with "rows":1 and as many columns as the parts add up to. The app keeps each part on screen and slides them together into the total, so the student watches 3 and 4 become 7. Do not put the parts and the total in the same step, and do not skip the total's step.
+
 Numbers may appear inside a visual, but your "say" must always speak the count or value too — never rely on the student reading it.
 
 Only when NO lines list is provided, fall back to:

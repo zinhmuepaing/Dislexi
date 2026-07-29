@@ -285,8 +285,13 @@ export default function TutoringPage() {
         onUtterance: (t) => void handleUtterance(t),
         onState: setListening,
       });
-    } catch {
+    } catch (err) {
+      // Was a bare `catch {}`: the mic flipped back to off with no explanation
+      // at all, which is why a missing server key looked like a broken button.
       setListening(false);
+      setErrorMsg(
+        `${err instanceof Error ? err.message : "Mic unavailable."} You can still type your question.`,
+      );
     }
   }
 

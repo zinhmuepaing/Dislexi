@@ -193,6 +193,14 @@ const sameGroup = (a: SceneGroup, b: SceneGroup) => a.rows === b.rows && a.cols 
 const totalCols = (gs: SceneGroup[]) => gs.reduce((n, g) => n + g.cols, 0);
 
 /**
+ * Lay a single-column strip on its side. The model encodes "3" as 3x1 about as
+ * often as 1x3; both are just a count, a row reads better on a phone, and it
+ * lets two parts written in different orientations still slide together.
+ */
+const asRow = (g: SceneGroup): SceneGroup =>
+  g.cols === 1 && g.rows > 1 ? { rows: 1, cols: g.rows } : g;
+
+/**
  * Fold the steps' visuals (in step order, up to and including the active one)
  * into the scene to draw. Returns null unless the active step is a unitGrid.
  *
@@ -223,17 +231,23 @@ export function buildCountingScene(
       settled = 1;
       merge = false;
     }
-    const incoming = spec.grids;
+    const incoming = spec.grids.map(asRow);
 
     // Only call it a merge when the parts REALLY tile into the total by
-    // sliding — same row count, columns adding up. 1x3 + 1x4 → 1x7 does;
+    // sliding, which needs them to share a row count: 1x3 + 1x4 → 7 does;
     // 3x3 + 4x4 → 5x5 (Pythagoras) does not, however true 9 + 16 = 25 is, and
     // animating that would show the student a lie.
+    //
+    // The total is matched on CELL COUNT, not on columns, and its own shape is
+    // ignored — what gets drawn is the parts pushed together, which carries the
+    // right count whatever rows/cols the model happened to pick for it. Being
+    // strict about the shape here is why the 3+4 slide only fired sometimes:
+    // a total returned as 7x1 instead of 1x7 silently failed the test.
     if (
       groups.length >= 2 &&
       incoming.length === 1 &&
-      groups.every((g) => g.rows === incoming[0].rows) &&
-      totalCols(groups) === incoming[0].cols
+      groups.every((g) => g.rows === groups[0].rows) &&
+      cellsIn(incoming[0]) === groups.reduce((n, g) => n + cellsIn(g), 0)
     ) {
       merge = true;
       settled = groups.length;

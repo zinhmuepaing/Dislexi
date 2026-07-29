@@ -354,6 +354,20 @@ const box = (l: number, t: number, r: number, b: number): [number, number][] => 
   assert.equal(sum.settled, 2);
   assert.equal(countedSquares(sum), 7, "the total is recounted from 1");
 
+  // THE RELIABILITY BUG: the model picks the total's shape freely, and matching
+  // on columns meant a 7 written as 7x1 silently failed to merge — the slide
+  // fired "sometimes". The total is matched on COUNT, and its shape ignored.
+  assert.equal(buildCountingScene([row(3), row(4), grid([7, 1])])!.merge, true,
+    "a total given as 7x1 is still seven, and must still slide together");
+  assert.equal(buildCountingScene([row(3), row(4), grid([1, 7])])!.merge, true);
+  // Parts written as columns are the same counts laid on their side.
+  const cols = buildCountingScene([grid([3, 1]), grid([4, 1]), grid([1, 7])])!;
+  assert.equal(cols.merge, true, "3x1 + 4x1 are a 3 and a 4 however they are written");
+  assert.deepEqual(cols.groups, [{ rows: 1, cols: 3 }, { rows: 1, cols: 4 }]);
+  // A wrong total is still refused, whatever its shape.
+  assert.equal(buildCountingScene([row(3), row(4), grid([1, 8])])!.merge, false);
+  assert.equal(buildCountingScene([row(3), row(4), grid([8, 1])])!.merge, false);
+
   // A join must be TRUE: 3x3 and 4x4 do not tile into a 5x5 by sliding, however
   // true 9 + 16 = 25 is. Pythagoras accumulates but never animates a merge.
   const pyth = buildCountingScene([grid([3, 3]), grid([4, 4]), grid([5, 5])])!;

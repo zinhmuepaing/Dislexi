@@ -154,12 +154,36 @@ function startWebkit(opts: VoiceListenerOptions): VoiceListener {
   };
 }
 
+/**
+ * Short, user-facing reason the mic could not start. The mic silently flipping
+ * itself back to off is indistinguishable from a broken button, so whatever the
+ * cause, the student (and whoever is debugging) gets told which one it was.
+ */
+export function micUnavailableMessage(err: unknown): string {
+  const msg = err instanceof Error ? err.message : String(err);
+  if (/not configured/i.test(msg)) return "Voice input isn't set up on the server yet.";
+  if (/azure-token 4\d\d/.test(msg)) return "Voice input was refused by the speech service.";
+  if (/azure-token \d\d\d/.test(msg)) return "The speech service is unavailable right now.";
+  if (/not-?allowed|permission|denied/i.test(msg)) return "Microphone permission is blocked.";
+  if (/not-?found|no microphone|no audio/i.test(msg)) return "No microphone was found.";
+  return "Mic unavailable.";
+}
+
 /** Start the endless mic: Azure first, webkit fallback. Throws if neither works. */
 export async function startVoiceListener(opts: VoiceListenerOptions): Promise<VoiceListener> {
+  let azureErr: unknown;
   try {
     return await startAzure(opts);
   } catch (err) {
+    azureErr = err;
     console.warn("Azure STT unavailable, falling back to webkitSpeechRecognition:", err);
+  }
+  try {
     return startWebkit(opts);
+  } catch (webkitErr) {
+    console.warn("webkitSpeechRecognition unavailable:", webkitErr);
+    // Report the AZURE reason, not the fallback's: "no speech recognition
+    // available" says nothing about why the real engine failed.
+    throw new Error(micUnavailableMessage(azureErr));
   }
 }
